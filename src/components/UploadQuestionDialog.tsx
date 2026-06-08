@@ -15,10 +15,12 @@ import {
   MoveUp, MoveDown, ChevronUp, ChevronDown, FileText, Layers, ArrowRight, ArrowLeft,
   Scissors, RotateCcw, Globe, Link2 as Link2Icon, Keyboard, ImageOff, Files
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { RequirementMarker } from '@/components/prd/RequirementMarker';
 import { createActivationHandlerKey, useRequirementReader } from '@/components/prd/RequirementReaderShell';
 import { createRequirementDisplayNumberMap, createRequirementMap } from '@/components/prd/requirement-utils';
+import { uploadFilesStepRegistry } from '@/requirements/upload-files-step.registry';
 import { uploadQuestionDialogSelectModeRegistry } from '@/requirements/upload-question-dialog-select-mode.registry';
 import { boxRecognitionStepRegistry } from '@/requirements/box-recognition-step.registry';
 import { questionAnswerReviewStepRegistry } from '@/requirements/question-answer-review-step.registry';
@@ -36,6 +38,7 @@ import { generateMatchedQuestions, generateAnswerMarkers, extractAnswerFromAnaly
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf-worker/pdf.worker.min.mjs';
 
 const uploadQuestionDialogMarkerRegistries = [
+  uploadFilesStepRegistry,
   uploadQuestionDialogSelectModeRegistry,
   boxRecognitionStepRegistry,
   questionAnswerReviewStepRegistry,
@@ -45,13 +48,425 @@ const uploadQuestionDialogMarkerRegistries = [
 
 /** 工作模式：仅题目 / 题目+答案（同文件）/ 题目+答案（不同文件） */
 type WorkMode = 'questions-only' | 'same-file' | 'cross-file';
+type ManualLinkField = 'answer' | 'analysis';
+interface ManualLinkTarget {
+  questionId: number;
+  field: ManualLinkField;
+}
 
 /** 流程阶段 */
 type FlowStep =
   | 'upload_files'          // 上传资料
   | 'select_mode'           // 选择识别方式
-  | 'frame_and_review'      // 框选并核对识别结果
-  | 'manual_link';          // 手动关联答案
+  | 'frame_and_review'      // 选择识别内容
+  | 'review'                // 核对识别结果
+  | 'manual_link';          // 旧版手动关联答案步骤，仅用于历史状态兼容
+
+const uploadFilesRequirementIds = [
+  'UPLOAD_FILES_STEP-001',
+  'UPLOAD_FILES_STEP-002',
+  'UPLOAD_FILES_STEP-003',
+  'UPLOAD_FILES_STEP-004',
+  'UPLOAD_FILES_STEP-005',
+  'UPLOAD_FILES_STEP-006',
+  'UPLOAD_FILES_STEP-007',
+  'UPLOAD_FILES_STEP-011',
+];
+
+const selectModeRequirementIds = [
+  'SELECT_MODE-007',
+  'SELECT_MODE-002',
+  'SELECT_MODE-003',
+  'SELECT_MODE-008',
+  'SELECT_MODE-005',
+  'SELECT_MODE-004',
+  'SELECT_MODE-006',
+];
+
+const boxStepRequirementIds = [
+  'SELECT_MODE-007',
+  'SELECT_MODE-006',
+  'BOX_STEP-001',
+  'BOX_STEP-002',
+  'BOX_STEP-003',
+  'BOX_STEP-004',
+  'BOX_STEP-005',
+  'BOX_STEP-012',
+  'BOX_STEP-006',
+  'BOX_STEP-007',
+  'BOX_STEP-008',
+  'BOX_STEP-010',
+  'BOX_STEP-011',
+  'BOX_STEP-013',
+];
+
+const reviewStepRequirementIds = [
+  'SELECT_MODE-007',
+  'SELECT_MODE-006',
+  'BOX_STEP-002',
+  'BOX_STEP-007',
+  'BOX_STEP-010',
+  'BOX_STEP-011',
+  'REVIEW_STEP-001',
+  'REVIEW_STEP-002',
+  'REVIEW_STEP-003',
+  'REVIEW_STEP-004',
+  'REVIEW_STEP-005',
+  'REVIEW_STEP-006',
+  'REVIEW_STEP-007',
+  'REVIEW_STEP-008',
+  'REVIEW_STEP-009',
+  'REVIEW_STEP-010',
+  'REVIEW_STEP-011',
+  'REVIEW_STEP-012',
+  'REVIEW_STEP-013',
+  'REVIEW_STEP-014',
+  'REVIEW_STEP-015',
+  'REVIEW_STEP-016',
+  'REVIEW_STEP-017',
+  'REVIEW_STEP-018',
+];
+
+function getActiveUploadDialogRequirementIds(flowStep: FlowStep) {
+  if (flowStep === 'upload_files') return uploadFilesRequirementIds;
+  if (flowStep === 'select_mode') return selectModeRequirementIds;
+  if (flowStep === 'frame_and_review') return boxStepRequirementIds;
+  return reviewStepRequirementIds;
+}
+
+type RecognitionModeVisualType = 'question-only' | 'same-file' | 'cross-file';
+type RecognitionModeAccent = 'blue' | 'purple' | 'amber';
+
+interface RecognitionModeCardProps {
+  mode: WorkMode;
+  icon: LucideIcon;
+  title: string;
+  badge?: string;
+  scenario: string;
+  visualType: RecognitionModeVisualType;
+  steps: string[];
+  accent: RecognitionModeAccent;
+  selected?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
+  onSelect: (mode: WorkMode) => void;
+}
+
+const recognitionModeAccentStyles = {
+  blue: {
+    icon: 'bg-blue-50 text-blue-600 group-hover:bg-blue-100',
+    badge: 'bg-blue-50 text-blue-600 border-blue-100',
+    selected: 'border-blue-400 bg-blue-50/40 shadow-md shadow-blue-100/70',
+    hover: 'hover:border-blue-300 hover:shadow-md hover:shadow-blue-100/60',
+    flow: 'border-blue-100 bg-blue-50 text-blue-700',
+    resultTag: 'bg-blue-50 text-blue-600',
+  },
+  purple: {
+    icon: 'bg-purple-50 text-purple-600 group-hover:bg-purple-100',
+    badge: 'bg-purple-50 text-purple-600 border-purple-100',
+    selected: 'border-purple-400 bg-purple-50/40 shadow-md shadow-purple-100/70',
+    hover: 'hover:border-purple-300 hover:shadow-md hover:shadow-purple-100/60',
+    flow: 'border-purple-100 bg-purple-50 text-purple-700',
+    resultTag: 'bg-purple-50 text-purple-600',
+  },
+  amber: {
+    icon: 'bg-amber-50 text-amber-600 group-hover:bg-amber-100',
+    badge: 'bg-amber-50 text-amber-600 border-amber-100',
+    selected: 'border-amber-400 bg-amber-50/40 shadow-md shadow-amber-100/70',
+    hover: 'hover:border-amber-300 hover:shadow-md hover:shadow-amber-100/60',
+    flow: 'border-amber-100 bg-amber-50 text-amber-700',
+    resultTag: 'bg-amber-50 text-amber-600',
+  },
+} as const;
+
+function SkeletonLine({ className }: { className?: string }) {
+  return <div className={cn('h-1.5 rounded-full bg-slate-200', className)} />;
+}
+
+function SourceDocumentPreview({ type }: { type: RecognitionModeVisualType }) {
+  const [sameFilePreviewIndex, setSameFilePreviewIndex] = useState(0);
+
+  if (type === 'cross-file') {
+    return (
+      <div className="relative h-full min-h-[172px] overflow-hidden rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-xs font-medium text-slate-500">资料页</span>
+          <span className="h-1.5 w-1.5 rounded-full bg-slate-200" />
+        </div>
+        <div className="grid h-[calc(100%-28px)] grid-cols-2 gap-2">
+          <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-white px-2.5 pb-2 pt-8 shadow-sm">
+            <span className="absolute left-2 top-2 rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">
+              题目文件
+            </span>
+            <div className="absolute left-2 top-12 h-9 w-[84%] rounded-md border-2 border-emerald-500 bg-emerald-100/30">
+              <span className="absolute -left-0.5 -top-5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                题目
+              </span>
+              <div className="mt-2 space-y-1.5 px-2">
+                <SkeletonLine className="w-full bg-emerald-200/80" />
+                <SkeletonLine className="w-4/5 bg-emerald-200/80" />
+              </div>
+            </div>
+          </div>
+          <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-white px-2.5 pb-2 pt-8 shadow-sm">
+            <span className="absolute left-2 top-2 rounded border border-purple-100 bg-purple-50 px-1.5 py-0.5 text-[10px] font-medium text-purple-600">
+              答案文件
+            </span>
+            <div className="mt-3 space-y-1.5">
+              <SkeletonLine className="w-full bg-purple-200/80" />
+              <SkeletonLine className="w-4/5 bg-purple-200/80" />
+              <SkeletonLine className="w-3/5 bg-purple-200/80" />
+              <SkeletonLine className="w-2/5 bg-purple-200/80" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-full min-h-[172px] overflow-hidden rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-xs font-medium text-slate-500">资料页</span>
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-200" />
+      </div>
+
+      {type === 'question-only' ? (
+        <div className="absolute left-3 top-14 h-14 w-[86%] rounded-md border-2 border-emerald-500 bg-emerald-100/30">
+          <span className="absolute -left-0.5 -top-5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+            题目
+          </span>
+          <div className="mt-3 space-y-1.5 px-2">
+            <SkeletonLine className="w-full bg-emerald-200/80" />
+            <SkeletonLine className="w-4/5 bg-emerald-200/80" />
+            <SkeletonLine className="w-2/3 bg-emerald-200/80" />
+          </div>
+        </div>
+      ) : sameFilePreviewIndex === 0 ? (
+        <div className="absolute left-3 top-14 h-12 w-[86%] rounded-md border-2 border-emerald-500 bg-emerald-100/30">
+          <span className="absolute -left-0.5 -top-5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+            题目+答案/解析
+          </span>
+          <div className="mt-3 space-y-1.5 px-2">
+            <SkeletonLine className="w-full bg-emerald-200/80" />
+            <SkeletonLine className="w-3/4 bg-emerald-200/80" />
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="absolute left-3 top-14 h-12 w-[86%] rounded-md border-2 border-emerald-500 bg-emerald-100/25">
+            <span className="absolute -left-0.5 -top-5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+              题目
+            </span>
+            <div className="mt-3 space-y-1.5 px-2">
+              <SkeletonLine className="w-full bg-emerald-200/80" />
+              <SkeletonLine className="w-3/4 bg-emerald-200/80" />
+            </div>
+          </div>
+          <div className="absolute left-3 top-[135px] h-12 w-[86%] rounded-md border-2 border-purple-500 bg-purple-100/30">
+            <span className="absolute -left-0.5 -top-5 rounded bg-purple-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+              答案/解析
+            </span>
+            <div className="mt-3 space-y-1.5 px-2">
+              <SkeletonLine className="w-full bg-purple-200/80" />
+              <SkeletonLine className="w-3/4 bg-purple-200/80" />
+            </div>
+          </div>
+        </>
+      )}
+      {type === 'same-file' && (
+        <div className="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5">
+          {[0, 1].map((index) => (
+            <button
+              key={index}
+              type="button"
+              aria-label={index === 0 ? '查看题目答案紧跟示意' : '查看题目答案分区示意'}
+              onClick={(event) => {
+                event.stopPropagation();
+                setSameFilePreviewIndex(index);
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+              className={cn(
+                'h-1.5 rounded-full transition-all',
+                sameFilePreviewIndex === index ? 'w-4 bg-purple-500' : 'w-1.5 bg-slate-300 hover:bg-slate-400',
+              )}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModeFlow({ steps, accent }: { steps: string[]; accent: RecognitionModeAccent }) {
+  const styles = recognitionModeAccentStyles[accent];
+
+  return (
+    <div className="flex h-full min-w-[84px] flex-col items-center justify-center gap-2">
+      {steps.map((step, index) => (
+        <Fragment key={step}>
+          <span className={cn('rounded-full border px-2 py-1 text-center text-[10px] font-medium leading-tight', styles.flow)}>
+            {step}
+          </span>
+          {index < steps.length - 1 && <ArrowRight className="h-3.5 w-3.5 rotate-90 text-slate-300" />}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+function StartRecognitionActionPreview() {
+  return (
+    <>
+      <div
+        aria-hidden="true"
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+        className="absolute right-2 top-1/2 z-20 flex h-8 w-8 -translate-y-1/2 cursor-default items-center justify-center rounded-full bg-emerald-500 text-white shadow-md shadow-emerald-200"
+      >
+        <Sparkles className="h-4 w-4" />
+      </div>
+      <span
+        aria-hidden="true"
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+        className="absolute right-2 top-[calc(50%+24px)] z-20 cursor-default rounded-full border border-emerald-100 bg-white px-2 py-0.5 text-[10px] font-medium leading-tight text-emerald-700 shadow-sm"
+      >
+        开始识别
+      </span>
+    </>
+  );
+}
+
+function ResultSection({ label, compact, tone = 'question' }: { label: string; compact?: boolean; tone?: 'question' | 'answer' }) {
+  const skeletonColor = tone === 'question' ? 'bg-emerald-200/80' : 'bg-purple-200/80';
+
+  return (
+    <div className="mb-3 last:mb-0">
+      <div className="mb-1 text-[10px] font-medium text-slate-400">{label}</div>
+      <div className="space-y-1.5">
+        <SkeletonLine className={cn(compact ? 'w-10' : 'w-full', skeletonColor)} />
+        {!compact && <SkeletonLine className={cn('w-4/5', skeletonColor)} />}
+      </div>
+    </div>
+  );
+}
+
+function RecognitionResultPreview({ type, accent }: { type: RecognitionModeVisualType; accent: RecognitionModeAccent }) {
+  const styles = recognitionModeAccentStyles[accent];
+
+  if (type === 'question-only') {
+    return (
+      <div className="flex h-full min-h-[172px] flex-col rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-xs font-medium text-slate-500">识别结果</span>
+        </div>
+        <ResultSection label="题干1" />
+        <ResultSection label="题干2" />
+        <ResultSection label="题干3" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-[172px] flex-col rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-xs font-medium text-slate-500">识别结果</span>
+      </div>
+      <ResultSection label="题干" />
+      <ResultSection label="答案" compact tone="answer" />
+      <ResultSection label="解析" tone="answer" />
+    </div>
+  );
+}
+
+function ModeVisual({ type, steps, accent }: { type: RecognitionModeVisualType; steps: string[]; accent: RecognitionModeAccent }) {
+  if (type === 'question-only' || type === 'same-file' || type === 'cross-file') {
+    return (
+      <div className="grid min-h-[210px] flex-1 grid-cols-[minmax(0,1.38fr)_minmax(0,0.74fr)] items-stretch gap-4 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+        <div className="relative">
+          <SourceDocumentPreview type={type} />
+          <StartRecognitionActionPreview />
+        </div>
+        <RecognitionResultPreview type={type} accent={accent} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid min-h-[210px] flex-1 grid-cols-[minmax(0,1fr)_84px_minmax(0,1fr)] items-stretch gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+      <SourceDocumentPreview type={type} />
+      <ModeFlow steps={steps} accent={accent} />
+      <RecognitionResultPreview type={type} accent={accent} />
+    </div>
+  );
+}
+
+function RecognitionModeCard({
+  mode,
+  icon: Icon,
+  title,
+  badge,
+  scenario,
+  visualType,
+  steps,
+  accent,
+  selected,
+  disabled,
+  disabledReason,
+  onSelect,
+}: RecognitionModeCardProps) {
+  const styles = recognitionModeAccentStyles[accent];
+
+  return (
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled}
+      title={disabled ? disabledReason : undefined}
+      onClick={() => {
+        if (!disabled) {
+          onSelect(mode);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (disabled || (event.key !== 'Enter' && event.key !== ' ')) {
+          return;
+        }
+        event.preventDefault();
+        onSelect(mode);
+      }}
+      className={cn(
+        'group flex h-full min-h-[356px] w-full cursor-pointer flex-col rounded-xl border-2 bg-white p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2',
+        selected ? styles.selected : cn('border-slate-200 shadow-sm', !disabled && styles.hover),
+        disabled && 'cursor-not-allowed opacity-55 grayscale-[0.15]',
+      )}
+    >
+      <div className="mb-4 flex items-start gap-3">
+        <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-colors', styles.icon)}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-slate-800">{title}</span>
+            {badge && <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-medium', styles.badge)}>{badge}</span>}
+            {selected && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600">
+                <Check className="h-3 w-3" />
+                已选
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">{scenario}</p>
+          {disabled && disabledReason && (
+            <p className="mt-1 text-[11px] leading-relaxed text-amber-600">{disabledReason}</p>
+          )}
+        </div>
+      </div>
+      <ModeVisual type={visualType} steps={steps} accent={accent} />
+    </div>
+  );
+}
 
 /** 文件角色信息（用于跨文件场景） */
 interface FileRoleInfo {
@@ -949,6 +1364,14 @@ function hasUsableAnalysis(entity: { analysis?: string }): boolean {
   return !!entity.analysis?.trim();
 }
 
+function hasParentAnswerClearContent(entity: { answer?: string; blankAnswers?: string[]; analysis?: string }): boolean {
+  return hasUsableAnswer(entity) || hasUsableAnalysis(entity);
+}
+
+function hasSubAnswerClearContent(question: Question): boolean {
+  return !!question.subQuestions?.some(hasParentAnswerClearContent);
+}
+
 function getMissingLabel(missingAnswer: boolean, missingAnalysis: boolean): string | null {
   if (missingAnswer && missingAnalysis) return '未匹配到答案与解析';
   if (missingAnswer) return '未匹配到答案';
@@ -1043,7 +1466,6 @@ export function UploadQuestionDialog({
   const router = useRouter();
   // ==================== 状态持久化 key ====================
   const DIALOG_STATE_KEY = 'leke_upload_dialog_state';
-
   // ==================== 根据学科动态计算有效题型 ====================
   const validQuestionTypes = getValidQuestionTypes(subjectInfo || '');
   const questionTypes = validQuestionTypes;
@@ -1063,6 +1485,16 @@ export function UploadQuestionDialog({
   
   // 兼容旧的 FlowStage（内部映射）
   const [flowStage, setFlowStage] = useState<FlowStage>('cutting');
+
+  useEffect(() => {
+    if (!requirementReader) {
+      return;
+    }
+
+    requirementReader.setActiveRequirementIds(getActiveUploadDialogRequirementIds(flowStep));
+
+    return () => requirementReader.setActiveRequirementIds(null);
+  }, [flowStep, requirementReader]);
   
   // 重新识别后高亮标记（自动清除）
   const [highlightedQuestionIds, setHighlightedQuestionIds] = useState<Set<number>>(new Set());
@@ -1084,6 +1516,13 @@ export function UploadQuestionDialog({
     }
 
     const cleanupHandlers = [
+      requirementReader.registerActivationHandler(createActivationHandlerKey('setStep', 'upload_files'), () => {
+        setShowFileRolePanel(false);
+        setFlowStep('upload_files');
+        setFlowStage('cutting');
+        setManualAnswerLinking(false);
+        setManualLinkTarget(null);
+      }),
       requirementReader.registerActivationHandler(createActivationHandlerKey('setStep', 'select_mode'), () => {
         setShowFileRolePanel(false);
         setWorkMode(null);
@@ -1098,6 +1537,22 @@ export function UploadQuestionDialog({
         setFlowStage('cutting');
 
       }),
+      requirementReader.registerActivationHandler(createActivationHandlerKey('setStep', 'review'), () => {
+        setShowFileRolePanel(false);
+        setWorkMode((current) => current ?? 'questions-only');
+        setFlowStep('review');
+        setFlowStage('matched');
+        setManualAnswerLinking(false);
+        setManualLinkTarget(null);
+      }),
+      requirementReader.registerActivationHandler(createActivationHandlerKey('setStep', 'manual_link'), () => {
+        setShowFileRolePanel(false);
+        setWorkMode((current) => current ?? 'same-file');
+        setFlowStep('review');
+        setFlowStage('matched');
+        setManualAnswerLinking(true);
+        setManualLinkTarget(null);
+      }),
       requirementReader.registerActivationHandler(createActivationHandlerKey('openDialog', 'SelectModeFileRoleDialog'), () => {
         if (fileRoles.length === 0 && uploadedFiles.length > 0) {
           setFileRoles(uploadedFiles.map((file) => ({
@@ -1109,6 +1564,9 @@ export function UploadQuestionDialog({
         setFlowStep('select_mode');
         setFlowStage('cutting');
         setShowFileRolePanel(true);
+      }),
+      requirementReader.registerActivationHandler(createActivationHandlerKey('openPanel', 'BoxStepMoreTools'), () => {
+        setMoreToolsOpen(true);
       }),
     ];
 
@@ -1126,6 +1584,7 @@ export function UploadQuestionDialog({
   
   // 画框相关
   const [questionBoxes, setQuestionBoxes] = useState<QuestionBox[]>([]);
+  const [reviewHiddenBoxIds, setReviewHiddenBoxIds] = useState<Set<string>>(new Set());
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number; pageNumber: number } | null>(null);
   const [currentBox, setCurrentBox] = useState<Partial<QuestionBox> | null>(null);
@@ -1166,6 +1625,8 @@ export function UploadQuestionDialog({
   const [pendingAnswerTargetId, setPendingAnswerTargetId] = useState<number | null>(null); // 类型弹窗中临时选择的关联题号
   const [showAnswerLinkPicker, setShowAnswerLinkPicker] = useState(false); // 第二步画答案框后的关联题号选择器
   const [pendingLinkBoxId, setPendingLinkBoxId] = useState<string | null>(null); // 待关联的答案框ID
+  const [manualAnswerLinking, setManualAnswerLinking] = useState(false); // 第四步内的手动关联答案子状态
+  const [manualLinkTarget, setManualLinkTarget] = useState<ManualLinkTarget | null>(null); // 从题卡答案/解析入口进入时的定向回填目标
   const [recognitionResult, setRecognitionResult] = useState<RecognitionResult | null>(null);
   
   // 使用 ref 存储最新的 questions，解决闭包问题
@@ -1211,10 +1672,9 @@ export function UploadQuestionDialog({
   const [isModeChanging, setIsModeChanging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingMessage, setProcessingMessage] = useState('');
+  const [toastMessage, setToastMessage] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [isRecognitionPaused, setIsRecognitionPaused] = useState(false);
-  const isRecognitionPausedRef = useRef(false); // 同步 ref，用于 catch 块中判断
-  const pausedRecognitionRef = useRef<{ boxes: QuestionBox[]; croppedImagesMap: Map<string, string> } | null>(null);
+  const activeRecognitionBoxIdsRef = useRef<string[]>([]);
   const [zoom, setZoom] = useState(100);
   const [showHelpDialog, setShowHelpDialog] = useState(false);
   const [highlightedQuestionId, setHighlightedQuestionId] = useState<number | null>(null);
@@ -1280,7 +1740,13 @@ export function UploadQuestionDialog({
       if (saved) {
         const state = JSON.parse(saved);
         if (state.workMode) setWorkMode(state.workMode);
-        if (state.flowStep) setFlowStep(state.flowStep);
+        if (state.flowStep === 'manual_link') {
+          setFlowStep('review');
+          setManualAnswerLinking(true);
+          setManualLinkTarget(null);
+        } else if (state.flowStep) {
+          setFlowStep(state.flowStep);
+        }
         if (state.questions?.length) setQuestions(state.questions);
         if (state.answers?.length) setAnswers(state.answers);
         if (state.questionBoxes?.length) setQuestionBoxes(state.questionBoxes);
@@ -1541,6 +2007,7 @@ export function UploadQuestionDialog({
   const handleRetryAutoDetect = () => {
     setHasAutoDetected(false);
     setQuestionBoxes([]);
+    setReviewHiddenBoxIds(new Set());
     autoDetectedPageCountRef.current = 0; // 重置切题计数，重新切全部页面
     runAutoDetectBoxes();
   };
@@ -1568,13 +2035,14 @@ export function UploadQuestionDialog({
     switch (flowStep) {
       case 'select_mode': return 'cutting';
       case 'frame_and_review': return flowStage === 'recognizing' ? 'recognizing' : 'cutting';
+      case 'review': return flowStage === 'recognizing' ? 'recognizing' : 'matched';
       case 'manual_link': return 'matched';
       default: return 'cutting';
     }
   }, [flowStep, flowStage]);
 
-  /** 是否允许在左侧画框（步骤2和步骤3都支持） */
-  const canDrawBoxes = flowStep === 'frame_and_review' || flowStep === 'manual_link';
+  /** 是否允许在左侧画框（选择识别内容和核对结果都支持） */
+  const canDrawBoxes = flowStep === 'frame_and_review' || flowStep === 'review' || flowStep === 'manual_link';
 
   /** 文件角色初始化：当多文件上传时自动设置 */
   useEffect(() => {
@@ -1621,6 +2089,10 @@ export function UploadQuestionDialog({
 
   /** 选择工作模式后的处理 */
   const handleModeSelect = (mode: WorkMode) => {
+    if (mode === 'cross-file' && (!uploadedFiles || uploadedFiles.length < 2)) {
+      return;
+    }
+
     setWorkMode(mode);
     if (mode === 'questions-only' || mode === 'same-file') {
       // 仅题目 / 题目+答案（同文件）：直接进入框选识别阶段
@@ -1657,12 +2129,21 @@ export function UploadQuestionDialog({
     switch (step) {
       case 'upload_files':
         setFlowStage('cutting');
+        setManualAnswerLinking(false);
+        setManualLinkTarget(null);
         break;
       case 'select_mode':
         setFlowStage('cutting');
+        setWorkMode(null);
+        setShowFileRolePanel(false);
+        setFileRolePanelFileIds(null);
+        setManualAnswerLinking(false);
+        setManualLinkTarget(null);
         break;
       case 'frame_and_review':
         setFlowStage('cutting');
+        setManualAnswerLinking(false);
+        setManualLinkTarget(null);
         // 回退到识别阶段时，重置所有处理状态，确保按钮和操作可用
         setIsProcessing(false);
         setBatchProcessing(false);
@@ -1670,8 +2151,16 @@ export function UploadQuestionDialog({
         // 回退时取消所有框的选中状态，保留已框选区域
         setQuestionBoxes(prev => prev.map(b => ({ ...b, isSelected: false })));
         break;
-      case 'manual_link':
+      case 'review':
         setFlowStage('matched');
+        setManualAnswerLinking(false);
+        setManualLinkTarget(null);
+        break;
+      case 'manual_link':
+        setFlowStep('review');
+        setFlowStage('matched');
+        setManualAnswerLinking(true);
+        setManualLinkTarget(null);
         // 进入核对阶段时，如果有未匹配答案的题目，定位到第一个
         setTimeout(() => {
           const failedIds = Array.from(answerMatchFailedForQuestionIds);
@@ -1698,6 +2187,8 @@ export function UploadQuestionDialog({
   /** 确认返回模式选择 */
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showClearRecognitionConfirm, setShowClearRecognitionConfirm] = useState<'modify_files' | 'modify_mode' | null>(null);
+  const [showAddToPaperConfirm, setShowAddToPaperConfirm] = useState(false);
+  const [moreToolsOpen, setMoreToolsOpen] = useState(false); // 步骤3右侧更多工具菜单展开/收起
   const [editingRangeIndex, setEditingRangeIndex] = useState<number | null>(null); // 正在调整页码范围的文件索引
   const [editRangeStart, setEditRangeStart] = useState(1);
   const [editRangeEnd, setEditRangeEnd] = useState(1);
@@ -1733,7 +2224,10 @@ export function UploadQuestionDialog({
     setQuestions([]);
     setAnswers([]);
     setQuestionBoxes([]);
+    setReviewHiddenBoxIds(new Set());
     setFileRoles([]);
+    setManualAnswerLinking(false);
+    setManualLinkTarget(null);
     setShowResetConfirm(false);
   };
 
@@ -1875,8 +2369,67 @@ export function UploadQuestionDialog({
     };
   }, [uploadedFiles]);
 
-  // 当前选择统计（只统计未识别的框）
-  const selectedCount = questionBoxes.filter(b => b.isSelected).length;
+  const isReviewStep = flowStep === 'review' || flowStep === 'manual_link';
+  const isSelectionStep = flowStep === 'frame_and_review';
+  const visibleQuestionBoxes = questionBoxes.filter(box =>
+    !isReviewStep || (!box.recognized && !reviewHiddenBoxIds.has(box.id))
+  );
+
+  // 当前选择统计：第四步只统计仍显示在左侧、可继续识别的新框
+  const selectedCount = visibleQuestionBoxes.filter(b => b.isSelected).length;
+  const totalBoxCount = visibleQuestionBoxes.length;
+  const canOperateBoxes = totalBoxCount > 0 && !isAutoDetecting;
+  const showBoxStepFloatingActions = (isReviewStep || (isSelectionStep && hasAutoDetected)) && !isAutoDetecting;
+  const hideBoxesInReview = (boxIds: string[]) => {
+    if (boxIds.length === 0) return;
+    setReviewHiddenBoxIds(prev => {
+      const next = new Set(prev);
+      boxIds.forEach(id => next.add(id));
+      return next;
+    });
+  };
+  const restoreActiveRecognitionBoxes = () => {
+    const boxIds = activeRecognitionBoxIdsRef.current;
+    if (boxIds.length === 0) return;
+    setReviewHiddenBoxIds(prev => {
+      const next = new Set(prev);
+      boxIds.forEach(id => next.delete(id));
+      return next;
+    });
+    activeRecognitionBoxIdsRef.current = [];
+  };
+  const clearActiveRecognitionBoxes = () => {
+    activeRecognitionBoxIdsRef.current = [];
+  };
+  const scrollToAnswerFilePage = () => {
+    if (workMode !== 'cross-file') return;
+    const answerPageIndex = pageImages.findIndex((page) => {
+      const sourceFileIndex = page.sourceFileIndex;
+      return sourceFileIndex !== undefined && fileRoles[sourceFileIndex]?.role === 'answer';
+    });
+    if (answerPageIndex < 0) return;
+    const pageNum = answerPageIndex + 1;
+    setTimeout(() => {
+      const answerPageEl = containerRef.current?.querySelector(`[data-page="${pageNum}"]`) as HTMLElement | null;
+      answerPageEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 120);
+  };
+  const enterManualAnswerLinking = (target?: ManualLinkTarget | null) => {
+    if (target !== undefined) {
+      setManualLinkTarget(target);
+    }
+    setManualAnswerLinking(target !== null);
+    if (target !== null) scrollToAnswerFilePage();
+  };
+  const handleDirectedManualLinkEntryClick = (questionId: number, field: ManualLinkField) => {
+    const target = { questionId, field };
+    setManualLinkTarget(target);
+    if (manualAnswerLinking) {
+      enterManualAnswerLinking(target);
+      return;
+    }
+    enterManualAnswerLinking(target);
+  };
   const reviewStats = useMemo(() => {
     const infos = questions.map(getQuestionMatchInfo);
     return {
@@ -1908,21 +2461,56 @@ export function UploadQuestionDialog({
     return role === 'question' ? '题目' : role === 'answer' ? '答案' : null;
   };
 
+  const getPageRoleValue = (pageNumber: number): FileRoleInfo['role'] | null => {
+    if (workMode !== 'cross-file') return null;
+    const page = pageImages[pageNumber - 1];
+    if (!page || page.sourceFileIndex === undefined) return null;
+    return fileRoles[page.sourceFileIndex]?.role ?? null;
+  };
+
+  const isAnswerFilePage = (pageNumber: number) => getPageRoleValue(pageNumber) === 'answer';
+
+  const canDrawOnPage = (pageNumber: number) => {
+    if (!canDrawBoxes) return false;
+    if (!isReviewStep || workMode !== 'cross-file') return true;
+
+    const pageRole = getPageRoleValue(pageNumber);
+
+    if (manualAnswerLinking) {
+      return pageRole !== 'question';
+    }
+
+    return pageRole !== 'answer';
+  };
+
+  const showDrawBlockedToast = (pageNumber: number) => {
+    if (!isReviewStep || workMode !== 'cross-file') return;
+
+    const pageRole = getPageRoleValue(pageNumber);
+    if (!manualAnswerLinking && pageRole === 'answer') {
+      setToastMessage('当前为题干重识别状态，请在题目文件中框选题干内容');
+    } else if (manualAnswerLinking && pageRole === 'question') {
+      setToastMessage('当前为答案/解析关联状态，请在答案文件中框选内容');
+    } else {
+      return;
+    }
+
+    setTimeout(() => setToastMessage(''), 3000);
+  };
+
   const unlinkedAnswerCount = answers.filter(a => a.status === 'unlinked').length;
   
   // 未识别的框数量
   const unrecognizedCount = questionBoxes.filter(b => !b.recognized).length;
 
-  // 全选/取消全选（对所有框生效）
-  const handleSelectAll = () => {
-    const allSelected = questionBoxes.length > 0 && questionBoxes.every(b => b.isSelected);
-    setQuestionBoxes(prev => prev.map(b => ({ ...b, isSelected: !allSelected })));
-  };
-
   // 鼠标事件处理
   const handleMouseDown = useCallback((e: React.MouseEvent, pageNum: number) => {
     // 允许在可画框阶段画框
     if (!canDrawBoxes) return;
+    if (!canDrawOnPage(pageNum)) {
+      showDrawBlockedToast(pageNum);
+      return;
+    }
     if ((e.target as HTMLElement).closest('.question-box')) return;
     if ((e.target as HTMLElement).closest('.recognized-box')) return;
     if ((e.target as HTMLElement).closest('.resize-handle')) return;
@@ -1938,7 +2526,7 @@ export function UploadQuestionDialog({
     setDrawStart({ x, y, pageNumber: pageNum });
     setCurrentBox({ x, y, width: 0, height: 0, pageNumber: pageNum });
     setSelectedBoxId(null);
-  }, [flowStage, canDrawBoxes]);
+  }, [canDrawBoxes, canDrawOnPage, showDrawBlockedToast]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     // 找到当前鼠标所在的页面容器
@@ -2117,14 +2705,31 @@ export function UploadQuestionDialog({
         setQuestionBoxes(prev => [...prev, newBox]);
         // 分步/跨文件模式：按步骤自动设定框类型，跳过类型选择弹窗
         if (workMode === 'same-file' || workMode === 'cross-file') {
-          if (flowStep === 'manual_link') {
-            // 步骤3：默认答案框，弹出关联题号选择器
+          if (manualAnswerLinking || flowStep === 'manual_link') {
+            // 第四步手动关联答案：定向入口直接回填；普通入口弹出关联题号选择器
+            const targetQuestion = manualLinkTarget
+              ? questionsRef.current.find(q => q.id === manualLinkTarget.questionId)
+              : null;
+            const linkedAnswerBox: QuestionBox = {
+              ...newBox,
+              type: 'answer',
+              linkedQuestionId: targetQuestion?.id,
+              questionNumber: targetQuestion?.number,
+            };
             setQuestionBoxes(prev => prev.map(b =>
-              b.id === newBoxId ? { ...b, type: 'answer' } : b
+              b.id === newBoxId ? linkedAnswerBox : b
             ));
-            setPendingAnswerTargetId(null);
-            setPendingLinkBoxId(newBoxId);
-            setShowAnswerLinkPicker(true);
+            if (manualLinkTarget && targetQuestion) {
+              setPendingAnswerTargetId(null);
+              setPendingLinkBoxId(null);
+              setShowAnswerLinkPicker(false);
+              setIsProcessing(true);
+              void processAnswerBoxes([linkedAnswerBox], manualLinkTarget);
+            } else {
+              setPendingAnswerTargetId(null);
+              setPendingLinkBoxId(newBoxId);
+              setShowAnswerLinkPicker(true);
+            }
           }
           // 步骤2：默认题干框，无需弹窗（type 已设为 question）
         }
@@ -2159,14 +2764,36 @@ export function UploadQuestionDialog({
           }));
           // 分步模式：按步骤自动设定框类型，跳过类型选择弹窗
 	          if (workMode === 'same-file' || workMode === 'cross-file') {
-            if (flowStep === 'manual_link') {
-              // 步骤3：确保为答案框，弹出关联题号选择器
+            if (manualAnswerLinking || flowStep === 'manual_link') {
+              // 第四步手动关联答案：定向入口直接回填；普通入口弹出关联题号选择器
+              const targetQuestion = manualLinkTarget
+                ? questionsRef.current.find(q => q.id === manualLinkTarget.questionId)
+                : null;
+              const linkedAnswerBox: QuestionBox | null = currentBox
+                ? {
+                    ...currentBox,
+                    type: 'answer',
+                    recognized: false,
+                    linkedQuestionId: targetQuestion?.id ?? currentBox.linkedQuestionId,
+                    questionNumber: targetQuestion?.number ?? currentBox.questionNumber,
+                  }
+                : null;
               setQuestionBoxes(prev => prev.map(b =>
-                b.id === boxId ? { ...b, type: 'answer', recognized: false } : b
+                b.id === boxId
+                  ? { ...b, type: 'answer', recognized: false, linkedQuestionId: targetQuestion?.id ?? b.linkedQuestionId, questionNumber: targetQuestion?.number ?? b.questionNumber }
+                  : b
               ));
-              setPendingAnswerTargetId(currentBox?.linkedQuestionId ?? null);
-              setPendingLinkBoxId(boxId);
-              setShowAnswerLinkPicker(true);
+              if (manualLinkTarget && targetQuestion && linkedAnswerBox) {
+                setPendingAnswerTargetId(null);
+                setPendingLinkBoxId(null);
+                setShowAnswerLinkPicker(false);
+                setIsProcessing(true);
+                void processAnswerBoxes([linkedAnswerBox], manualLinkTarget);
+              } else {
+                setPendingAnswerTargetId(currentBox?.linkedQuestionId ?? null);
+                setPendingLinkBoxId(boxId);
+                setShowAnswerLinkPicker(true);
+              }
             }
             // 第一步：默认题干框（type 保持 question 即可）
 	          }
@@ -2176,20 +2803,30 @@ export function UploadQuestionDialog({
     
     setResizing(null);
     setMoving(null);
-  }, [isDrawing, currentBox, resizing, moving]);
+  }, [isDrawing, currentBox, resizing, moving, workMode, flowStep, manualAnswerLinking, manualLinkTarget, questionBoxes, selectedBoxId]);
 
   // 删除框
   const handleDeleteBox = (boxId: string) => {
     setQuestionBoxes(prev => prev.filter(b => b.id !== boxId));
+    setReviewHiddenBoxIds(prev => {
+      const next = new Set(prev);
+      next.delete(boxId);
+      return next;
+    });
     if (selectedBoxId === boxId) setSelectedBoxId(null);
   };
 
-  // 一键清空所有切题框
+  // 一键清空当前可操作的切题框
   const handleClearAllBoxes = () => {
-    setQuestionBoxes([]);
+    setQuestionBoxes(prev => isReviewStep ? prev.filter(b => b.recognized) : []);
+    if (!isReviewStep) {
+      setReviewHiddenBoxIds(new Set());
+    }
     setSelectedBoxId(null);
     setShowClearConfirm(false);
-    autoDetectedPageCountRef.current = 0; // 重置切题计数
+    if (!isReviewStep) {
+      autoDetectedPageCountRef.current = 0; // 重置切题计数
+    }
   };
 
   // 切换框选中状态
@@ -2228,8 +2865,47 @@ export function UploadQuestionDialog({
     setSelectedBoxId(boxId);
   };
 
+  const extractManualLinkFieldText = (
+    result: { answer?: string; analysis?: string; content?: string } | undefined,
+    field: ManualLinkField
+  ) => {
+    if (!result) return '';
+    const candidates = field === 'answer'
+      ? [result.answer, result.content, result.analysis]
+      : [result.analysis, result.content, result.answer];
+    return candidates.find((value) => value?.trim())?.trim() || '';
+  };
+
+  const applyManualLinkTargetToQuestion = (question: Question, field: ManualLinkField, text: string): Question => {
+    const normalizedText = text.trim();
+    if (!normalizedText) return question;
+
+    if (field === 'answer') {
+      if (isFillBlankType(question.questionType) && question.blankCount > 1) {
+        const splitAnswers = splitAnswerByBlanks(normalizedText, question.blankCount);
+        const blankAnswers = splitAnswers || Array.from({ length: question.blankCount }, (_, index) =>
+          index === 0 ? normalizedText : (question.blankAnswers[index] || '')
+        );
+        return {
+          ...question,
+          blankAnswers,
+          answer: splitAnswers ? '' : question.answer,
+          status: 'matched',
+          answerSource: 'manual',
+        };
+      }
+      return { ...question, answer: normalizedText, status: 'matched', answerSource: 'manual' };
+    }
+
+    return {
+      ...question,
+      analysis: normalizedText,
+      status: hasUsableAnswer(question) ? 'matched' : 'pending_confirm',
+    };
+  };
+
   // 处理答案框：裁剪后调用答案提取 API，匹配到已有题目
-  const processAnswerBoxes = async (boxes: QuestionBox[]) => {
+  const processAnswerBoxes = async (boxes: QuestionBox[], directTarget?: ManualLinkTarget | null) => {
     setProcessingMessage(`正在裁剪 ${boxes.length} 个答案区域...`);
 
     // 标记正在处理答案的题目
@@ -2237,6 +2913,7 @@ export function UploadQuestionDialog({
     boxes.forEach(b => {
       if (b.linkedQuestionId) processingIds.add(b.linkedQuestionId);
     });
+    if (directTarget) processingIds.add(directTarget.questionId);
     setAnswerProcessingForQuestionIds(processingIds);
     setAnswerMatchFailedForQuestionIds(new Set());
 
@@ -2448,7 +3125,28 @@ export function UploadQuestionDialog({
                 // 收集成功匹配的 questionId（用于后续判断匹配失败）
                 const matchedIds = new Set<number | string>();
 
-                if (preMatched && preMatched.length > 0) {
+                if (directTarget) {
+                  const directBoxId = orderedBoxes[0]?.id;
+                  const directResult =
+                    preMatched?.find((item) => item.boxId === directBoxId) ||
+                    unmatchedAnswers?.find((item) => item.boxId === directBoxId) ||
+                    preMatched?.[0] ||
+                    unmatchedAnswers?.[0];
+                  const directText = extractManualLinkFieldText(directResult, directTarget.field);
+
+                  if (directText) {
+                    setQuestions(prev => prev.map(q =>
+                      q.id === directTarget.questionId
+                        ? applyManualLinkTargetToQuestion(q, directTarget.field, directText)
+                        : q
+                    ));
+                    matchedIds.add(directTarget.questionId);
+                    setHighlightedQuestionIds(new Set([directTarget.questionId]));
+                    setTimeout(() => setHighlightedQuestionIds(new Set()), 2500);
+                  }
+
+                  setProcessingMessage('答案提取完成');
+                } else if (preMatched && preMatched.length > 0) {
                   let preMatchedCount = 0;
                   setQuestions(prev => {
                     let updated = [...prev];
@@ -2500,7 +3198,7 @@ export function UploadQuestionDialog({
                 // 匹配答案到已有题目
                 // 核心策略：优先使用框类型弹窗时建立的 linkedQuestionId 映射关系自动填充
                 // 其次用 AI 返回的 questionNumber 尝试自动匹配（兜底）
-                if (unmatchedAnswers && unmatchedAnswers.length > 0) {
+                if (!directTarget && unmatchedAnswers && unmatchedAnswers.length > 0) {
                   let matchedCount = 0;
                   setQuestions(prev => {
                     let updated = [...prev];
@@ -2534,7 +3232,7 @@ export function UploadQuestionDialog({
                     return updated;
                   });
                   setProcessingMessage('答案提取完成');
-                } else {
+                } else if (!directTarget) {
                   setProcessingMessage('答案提取完成');
                 }
 
@@ -2563,8 +3261,13 @@ export function UploadQuestionDialog({
                 setTimeout(() => {
                   setIsProcessing(false);
                   setBatchProcessing(false);
+                  setFlowStep('review');
                   setFlowStage('matched');
                   setProcessingMessage('');
+                  if (directTarget) {
+                    setManualAnswerLinking(false);
+                    setManualLinkTarget(null);
+                  }
                 }, 2000);
                 return;
               } else if (chunk.type === 'error') {
@@ -2580,8 +3283,14 @@ export function UploadQuestionDialog({
       setProcessingMessage(`答案提取失败: ${message}`);
       setAnswerProcessingForQuestionIds(new Set());
       setBatchProcessing(false);
+      restoreActiveRecognitionBoxes();
+      if (directTarget) {
+        setManualAnswerLinking(false);
+        setManualLinkTarget(null);
+      }
       setTimeout(() => {
         setIsProcessing(false);
+        setFlowStep('review');
         setFlowStage('matched');
         setProcessingMessage('');
       }, 3000);
@@ -2592,8 +3301,30 @@ export function UploadQuestionDialog({
   const handleBatchMove = async () => {
     // 处理被选中的框（包括未识别和已识别的框）
     // 已识别的框：用户可能调整了范围或想重新识别，先重置为未识别状态再走流程
-    const selectedBoxes = questionBoxes.filter(b => b.isSelected);
+    let selectedBoxes = questionBoxes.filter(b => b.isSelected && (!isReviewStep || !b.recognized));
+    if (isReviewStep && workMode === 'cross-file' && !manualAnswerLinking) {
+      const answerFileBoxIds = selectedBoxes
+        .filter(box => isAnswerFilePage(box.pageNumber))
+        .map(box => box.id);
+
+      if (answerFileBoxIds.length > 0) {
+        setQuestionBoxes(prev => prev.map(box =>
+          answerFileBoxIds.includes(box.id) ? { ...box, isSelected: false } : box
+        ));
+        selectedBoxes = selectedBoxes.filter(box => !answerFileBoxIds.includes(box.id));
+        setToastMessage('已跳过答案文件区域；普通重识别请在题目文件中框选题干内容');
+        setTimeout(() => setToastMessage(''), 3000);
+      }
+    }
     if (selectedBoxes.length === 0) return;
+    const selectedBoxIds = selectedBoxes.map(box => box.id);
+    activeRecognitionBoxIdsRef.current = selectedBoxIds;
+    hideBoxesInReview(selectedBoxIds);
+    if (flowStep === 'frame_and_review') {
+      setFlowStep('review');
+    }
+    setManualAnswerLinking(false);
+    setManualLinkTarget(null);
 
     // 在重置前捕获：哪些题目将被重新识别（用于场景B/C的UI状态）
     const currentQuestions = questionsRef.current;
@@ -2636,7 +3367,10 @@ export function UploadQuestionDialog({
     const answerTypeBoxes = selectedBoxes.filter(b => b.type === 'answer');
     console.log('[重识别检测] questionTypeBoxes:', questionTypeBoxes.length, 'reIds.size:', reIds.size, '→ newBoxCount:', questionTypeBoxes.length - reIds.size);
 
-    if (questionTypeBoxes.length === 0 && answerTypeBoxes.length === 0) return;
+    if (questionTypeBoxes.length === 0 && answerTypeBoxes.length === 0) {
+      restoreActiveRecognitionBoxes();
+      return;
+    }
 
     setIsProcessing(true);
     setFlowStage('recognizing');
@@ -2672,12 +3406,14 @@ export function UploadQuestionDialog({
     if (hasAnswers && !hasQuestions) {
       // 场景A：纯答案框 → 答案提取模式（覆盖已有题目的答案/解析）
       await processAnswerBoxes(answerTypeBoxes);
+      clearActiveRecognitionBoxes();
       return;
     }
 
     if (hasQuestions && !hasAnswers) {
       // 场景B：纯题目框 → 完整识别流程（新增/合并题目卡片）
       await recognizeQuestionBoxes(questionTypeBoxes, new Map());
+      clearActiveRecognitionBoxes();
       return;
     }
 
@@ -2692,6 +3428,7 @@ export function UploadQuestionDialog({
     if (failures.length > 0) {
       console.error('混合识别部分失败:', failures.map(f => f.status === 'rejected' ? f.reason : ''));
     }
+    clearActiveRecognitionBoxes();
     return;
   };
 
@@ -2704,9 +3441,6 @@ export function UploadQuestionDialog({
     // 裁剪图片存储
     const croppedImagesMap = new Map(existingCroppedImagesMap);
     let hasError = false;
-
-    // 保存到 ref 以支持暂停后恢复
-    pausedRecognitionRef.current = { boxes, croppedImagesMap: existingCroppedImagesMap };
 
     try {
       // 1. 裁剪所有选中框的图片
@@ -3116,13 +3850,14 @@ export function UploadQuestionDialog({
                 }
 
                 // 分步模式/跨文件模式-题目识别完成后，自动触发全局答案匹配
-                if ((workMode === 'same-file' || workMode === 'cross-file') && flowStep === 'frame_and_review') {
+                if ((workMode === 'same-file' || workMode === 'cross-file') && (flowStep === 'frame_and_review' || flowStep === 'review')) {
                   setTimeout(() => {
                     handleGlobalMatchAnswers(true);
                   }, 100);
                 }
 
-                // 识别完成后停留在当前步骤，右侧展示结果，左侧继续可操作
+                // 识别完成后进入核对结果步骤，右侧展示结果，左侧继续可框选新增内容
+                setFlowStep('review');
                 setFlowStage('matched');
                 return; // 成功完成，退出函数
               } else if (chunk.type === 'error') {
@@ -3142,20 +3877,12 @@ export function UploadQuestionDialog({
       // 如果流结束但没有收到 complete 消息
       throw new Error('AI 识别未返回完整结果，请重试');
     } catch (error) {
-      // 检查是否被用户主动中止（暂停或取消）
+      // 检查是否被用户主动中止（取消识别）
       const isAborted = error instanceof DOMException && error.name === 'AbortError';
       if (isAborted) {
         abortControllerRef.current = null;
-        // 暂停：保存待处理的框信息，不清除数据
-        if (isRecognitionPausedRef.current) {
-          console.log('[识别] 用户暂停识别');
-        } else {
-          // 取消：正常清理
-          console.log('[识别] 用户取消识别');
-          isRecognitionPausedRef.current = false;
-          setIsRecognitionPaused(false);
-          pausedRecognitionRef.current = null;
-        }
+        console.log('[识别] 用户取消识别');
+        restoreActiveRecognitionBoxes();
         // 不清空已识别的结果，只停止后续处理
         return; // 直接返回，不创建 mock 数据
       }
@@ -3176,6 +3903,8 @@ export function UploadQuestionDialog({
       if (currentQuestions.length > 0) {
         setProcessingMessage(`识别失败: ${isNetworkError ? '网络连接异常，请稍后重试' : isCredentialError ? 'AI 服务未配置，请联系管理员设置 API Key' : errorMessage}`);
         // 保留已有题目，停留在当前步骤
+        restoreActiveRecognitionBoxes();
+        setFlowStep('review');
         setFlowStage('matched');
       } else {
         // 首次识别失败，降级为 Mock 数据
@@ -3204,45 +3933,23 @@ export function UploadQuestionDialog({
         }));
 
         setQuestions(prev => [...prev, ...mockQuestions]);
+        setFlowStep('review');
         setFlowStage('matched');
       }
     } finally {
-      // 暂停状态下保持处理中状态，不清除
-      if (!isRecognitionPausedRef.current) {
-        setIsProcessing(false);
-        // 仅在成功完成后清除进度信息，报错时保留错误提示
-        if (!hasError) {
-          setProcessingMessage('');
-        }
-        // 清除重识别状态和自定义进度标记
-        setReRecognizingIds(new Set());
-        customProgressRef.current = false;
-        // 一步模式识别完成后重置 batchProcessing
-        if (workMode === 'questions-only') {
-          setBatchProcessing(false);
-        }
+      setIsProcessing(false);
+      // 仅在成功完成后清除进度信息，报错时保留错误提示
+      if (!hasError) {
+        setProcessingMessage('');
+      }
+      // 清除重识别状态和自定义进度标记
+      setReRecognizingIds(new Set());
+      customProgressRef.current = false;
+      // 一步模式识别完成后重置 batchProcessing
+      if (workMode === 'questions-only') {
+        setBatchProcessing(false);
       }
     }
-  };
-
-  /** 暂停识别 */
-  const handlePauseRecognition = () => {
-    if (!abortControllerRef.current) return;
-    isRecognitionPausedRef.current = true;
-    setIsRecognitionPaused(true);
-    setProcessingMessage('识别已暂停');
-    abortControllerRef.current.abort();
-  };
-
-  /** 继续识别（重新提交） */
-  const handleResumeRecognition = () => {
-    const paused = pausedRecognitionRef.current;
-    if (!paused) return;
-    isRecognitionPausedRef.current = false;
-    setIsRecognitionPaused(false);
-    setProcessingMessage('正在继续识别...');
-    // 重新提交识别
-    recognizeQuestionBoxes(paused.boxes, paused.croppedImagesMap);
   };
 
   /** 取消识别 */
@@ -3250,14 +3957,12 @@ export function UploadQuestionDialog({
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
-    isRecognitionPausedRef.current = false;
-    setIsRecognitionPaused(false);
-    pausedRecognitionRef.current = null;
     setReRecognizingIds(new Set());
     customProgressRef.current = false;
     setIsProcessing(false);
     setProcessingMessage('');
     setBatchProcessing(false);
+    restoreActiveRecognitionBoxes();
   };
 
   // 全局匹配答案：AI 从整页/多页资料中定位答案区域，自动关联到已有题目
@@ -3377,6 +4082,7 @@ export function UploadQuestionDialog({
                 setTimeout(() => {
                   setIsProcessing(false);
                   setBatchProcessing(false);
+                  setFlowStep('review');
                   setFlowStage('matched');
                   setProcessingMessage('');
                 }, 2000);
@@ -3394,6 +4100,7 @@ export function UploadQuestionDialog({
       // 注意：正常流程中 complete/error 事件会通过 return 或 throw 提前退出
       console.warn('[全局匹配] SSE 流结束但未收到 complete/error 事件，强制清除 loading');
       setIsProcessing(false);
+      setFlowStep('review');
       setFlowStage('matched');
       setProcessingMessage('全局匹配完成');
       setTimeout(() => setProcessingMessage(''), 3000);
@@ -3403,6 +4110,7 @@ export function UploadQuestionDialog({
       setProcessingMessage(`全局匹配失败: ${message}`);
       setTimeout(() => {
         setIsProcessing(false);
+        setFlowStep('review');
         setFlowStage('matched');
         setProcessingMessage('');
         if (isAutoTriggered) setBatchProcessing(false);
@@ -3421,6 +4129,7 @@ export function UploadQuestionDialog({
     setShowReuploadConfirm(false);
     // 清空当前数据
     setQuestionBoxes([]);
+    setReviewHiddenBoxIds(new Set());
     setQuestions([]);
     setAnswers([]);
     setRecognitionResult(null);
@@ -4298,65 +5007,60 @@ export function UploadQuestionDialog({
 
   // 加入试卷
   const handleAddToPaper = () => {
-    if (questions.length > 0) {
-      if (workMode !== 'questions-only' && reviewStats.incompleteItemCount > 0) {
-        const shouldContinue = window.confirm(`仍有 ${reviewStats.incompleteItemCount} 道题/子题未匹配答案解析，是否继续加入试卷？`);
-        if (!shouldContinue) {
-          if (reviewStats.firstIncompleteQuestionId) {
-            const firstEl = document.querySelector(`[data-question-id="${reviewStats.firstIncompleteQuestionId}"]`) as HTMLElement | null;
-            firstEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-          return;
-        }
-      }
-
-      saveDialogState();
-
-      // 将数据写入 sessionStorage，供 paper-edit 页面读取
-      try {
-        const paperData = {
-          pageImages: pageImages.map(p => ({
-            data: p.imageData,
-            fileName: uploadedFiles[p.sourceFileIndex || 0]?.name || '',
-            sourceFileIndex: p.sourceFileIndex || 0,
-            pageNumber: p.pageNumber,
-          })),
-          questions: questions.map(q => ({
-            id: String(q.id),
-            number: q.number,
-            questionType: q.questionType,
-            content: q.content,
-            answer: workMode === 'questions-only' ? '' : q.answer || '',
-            analysis: workMode === 'questions-only' ? '' : q.analysis || '',
-            knowledgePoints: [],
-            difficulty: '容易',
-            croppedImageData: q.userCroppedImageData || q.croppedImageData || '',
-            originalCroppedImageData: q.croppedImageData || '',
-            optionCount: q.optionCount,
-            optionContents: q.optionContents || {},
-            blankCount: q.blankCount,
-            blankAnswers: workMode === 'questions-only' ? [] : q.blankAnswers || [],
-            subQuestions: (q.subQuestions || []).map((sub, subIndex) => ({
-              id: String(sub.id),
-              number: `${q.number}.${subIndex + 1}`,
-              questionType: sub.questionType,
-              content: sub.content,
-              answer: workMode === 'questions-only' ? '' : sub.answer || '',
-              analysis: workMode === 'questions-only' ? '' : sub.analysis || '',
-              optionCount: sub.optionCount,
-              optionContents: sub.optionContents || {},
-              blankCount: sub.blankCount || 1,
-              blankAnswers: workMode === 'questions-only' ? [] : sub.blankAnswers || [],
-            })),
-          })),
-          subjectInfo: subjectInfo || '',
-        };
-        sessionStorage.setItem('paperEditData', JSON.stringify(paperData));
-      } catch (e) {
-        console.error('[handleAddToPaper] sessionStorage 写入失败:', e);
-      }
-      onAddToPaper(questions);
+    if (questions.length === 0) return;
+    if (workMode !== 'questions-only' && reviewStats.incompleteItemCount > 0) {
+      setShowAddToPaperConfirm(true);
+      return;
     }
+    doAddToPaper();
+  };
+
+  const doAddToPaper = () => {
+    saveDialogState();
+
+    try {
+      const paperData = {
+        pageImages: pageImages.map(p => ({
+          data: p.imageData,
+          fileName: uploadedFiles[p.sourceFileIndex || 0]?.name || '',
+          sourceFileIndex: p.sourceFileIndex || 0,
+          pageNumber: p.pageNumber,
+        })),
+        questions: questions.map(q => ({
+          id: String(q.id),
+          number: q.number,
+          questionType: q.questionType,
+          content: q.content,
+          answer: workMode === 'questions-only' ? '' : q.answer || '',
+          analysis: workMode === 'questions-only' ? '' : q.analysis || '',
+          knowledgePoints: [],
+          difficulty: '容易',
+          croppedImageData: q.userCroppedImageData || q.croppedImageData || '',
+          originalCroppedImageData: q.croppedImageData || '',
+          optionCount: q.optionCount,
+          optionContents: q.optionContents || {},
+          blankCount: q.blankCount,
+          blankAnswers: workMode === 'questions-only' ? [] : q.blankAnswers || [],
+          subQuestions: (q.subQuestions || []).map((sub, subIndex) => ({
+            id: String(sub.id),
+            number: `${q.number}.${subIndex + 1}`,
+            questionType: sub.questionType,
+            content: sub.content,
+            answer: workMode === 'questions-only' ? '' : sub.answer || '',
+            analysis: workMode === 'questions-only' ? '' : sub.analysis || '',
+            optionCount: sub.optionCount,
+            optionContents: sub.optionContents || {},
+            blankCount: sub.blankCount || 1,
+            blankAnswers: workMode === 'questions-only' ? [] : sub.blankAnswers || [],
+          })),
+        })),
+        subjectInfo: subjectInfo || '',
+      };
+      sessionStorage.setItem('paperEditData', JSON.stringify(paperData));
+    } catch (e) {
+      console.error('[handleAddToPaper] sessionStorage 写入失败:', e);
+    }
+    onAddToPaper(questions);
   };
 
   // 加入试卷前校验并保存状态，以便「返回录题」时恢复
@@ -4375,6 +5079,22 @@ export function UploadQuestionDialog({
   const questionCardReorderDisplayNumber = workMode === 'same-file' ? 12 : 2;
   const questionCardDeleteDisplayNumber = workMode === 'same-file' ? 13 : 3;
   const firstQuestionWithCardActionsId = questions[0]?.id;
+  const firstQuestionWithTypeSelectorId = questions[0]?.id;
+  const firstQuestionWithParentAnswerClearId = questions.find((question) => {
+    const hasVisibleParentAnswerSection =
+      workMode !== 'questions-only' &&
+      (!(compoundQuestionTypes.includes(question.questionType) && (question.subQuestions || []).length > 0) ||
+        getQuestionMatchInfo(question).needsManualSplit);
+
+    return hasVisibleParentAnswerSection && hasParentAnswerClearContent(question);
+  })?.id;
+  const firstQuestionWithSubAnswerClearId = questions.find(
+    (question) =>
+      workMode !== 'questions-only' &&
+      compoundQuestionTypes.includes(question.questionType) &&
+      (question.subQuestions || []).length > 0 &&
+      hasSubAnswerClearContent(question),
+  )?.id;
   const firstQuestionWithImageId = questions.find(q => q.croppedImageData)?.id;
   const firstQuestionWithSubQuestionsId = questions.find(q =>
     compoundQuestionTypes.includes(q.questionType) && (q.subQuestions || []).length > 0
@@ -4391,63 +5111,39 @@ export function UploadQuestionDialog({
       className="fixed inset-y-0 left-0 bg-[#f0f4f7] z-50 flex flex-col"
       style={prdPanelOffsetStyle}
     >
-      {/* ==================== 顶部操作栏 ==================== */}
-      <div className="flex items-center justify-between px-4 py-2 bg-white border-b">
-        <h3 className="text-emerald-600 font-medium">识别作业资料</h3>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setShowHelpDialog(true)} className="flex items-center gap-1 px-2 py-1 text-sm text-gray-500 hover:text-gray-700">
-            <HelpCircle className="w-4 h-4" />操作说明
-          </button>
-          <button
-            onClick={() => {
-              // 关闭弹窗时清理持久化状态，回到首页以便用户开始新一轮识别流程
-              try {
-                sessionStorage.removeItem(DIALOG_STATE_KEY);
-                sessionStorage.removeItem('paperEditData');
-              } catch { /* ignore */ }
-              onClose();
-              router.push('/');
-            }}
-            className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
-          >
-            关闭
-          </button>
-          <div data-req-anchor="review-step-add-to-paper-btn" className="relative inline-flex">
-            {renderRequirementMarker('REVIEW_STEP-008', '-right-1 -top-1', 7)}
-          <button
-            onClick={handleAddToPaperWithSave}
-            disabled={questions.length === 0}
-            className={cn(
-              "px-3 py-1 rounded text-sm",
-              questions.length > 0 ? "bg-emerald-500 text-white hover:bg-emerald-600" : "bg-gray-200 text-gray-400 cursor-not-allowed"
-            )}
-          >
-            加入试卷
-          </button>
-          </div>
+      {/* Toast 提示 */}
+      {toastMessage && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-gray-800 text-white text-xs rounded-lg shadow-lg transition-opacity">
+          {toastMessage}
         </div>
-      </div>
+      )}
 
       {/* ==================== 进度条 ==================== */}
       {(workMode || flowStep === 'select_mode' || flowStep === 'upload_files') && (
-        <div data-req-anchor="select-mode-step-bar" className="relative bg-white border-b px-4 py-2">
-          {renderRequirementMarker('SELECT_MODE-007', 'right-2 top-1', 7)}
-          <div className="flex items-center gap-1">
+        <div
+          data-req-anchor={flowStep === 'upload_files' ? 'upload-files-step.step-bar' : 'select-mode-step-bar'}
+          className="relative bg-white border-b px-4 py-2"
+        >
+          {flowStep === 'upload_files'
+            ? renderRequirementMarker('UPLOAD_FILES_STEP-001', 'right-2 top-1')
+            : renderRequirementMarker('SELECT_MODE-007', 'right-2 top-1', 1)}
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
             {(() => {
               const baseSteps = [
                 { step: 'upload_files' as FlowStep, label: '上传资料', hint: '管理本次识别的资料文件' },
                 { step: 'select_mode' as FlowStep, label: '选择识别方式', hint: '请根据资料内容选择识别方式' },
-                { step: 'frame_and_review' as FlowStep, label: '框选并核对识别结果', hint: '在左侧资料上框选要识别的内容' },
+                { step: 'frame_and_review' as FlowStep, label: '选择识别内容', hint: '在左侧资料上选择要识别的内容' },
+                { step: 'review' as FlowStep, label: '核对识别结果', hint: '核对并补充识别出的题目内容' },
               ];
-              const steps = flowStep === 'manual_link'
-                ? [...baseSteps, { step: 'manual_link' as FlowStep, label: '手动关联答案', hint: '框选答案区域并关联到对应题目' }]
-                : baseSteps;
-              const currentStepIndex = steps.findIndex(s => s.step === flowStep);
+              const steps = baseSteps;
+              const currentStep = flowStep === 'manual_link' ? 'review' : flowStep;
+              const currentStepIndex = steps.findIndex(s => s.step === currentStep);
 
               return (
                 <div className="flex items-start gap-1">
                   {steps.map(({ step, label, hint }, idx) => {
-                    const isCurrent = step === flowStep;
+                    const isCurrent = step === currentStep;
                     const isPast = currentStepIndex > idx;
                     const canClickBack = isPast && !isCurrent;
 
@@ -4523,6 +5219,25 @@ export function UploadQuestionDialog({
                 </div>
               );
             })()}
+            </div>
+            <div className="flex shrink-0 items-center gap-3 pt-0.5">
+<button onClick={() => setShowHelpDialog(true)} className="flex items-center gap-1 px-2 py-1 text-sm text-gray-500 hover:text-gray-700">
+                <HelpCircle className="w-4 h-4" />操作说明
+              </button>
+              <div data-req-anchor="review-step-add-to-paper-btn" className="relative inline-flex">
+                {isReviewStep && renderRequirementMarker('REVIEW_STEP-008', '-right-1 -top-1')}
+                <button
+                  onClick={handleAddToPaperWithSave}
+                  disabled={questions.length === 0}
+                  className={cn(
+                    "px-3 py-1 rounded text-sm",
+                    questions.length > 0 ? "bg-emerald-500 text-white hover:bg-emerald-600" : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                  )}
+                >
+                  加入试卷
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -4533,7 +5248,6 @@ export function UploadQuestionDialog({
           <div className="max-w-6xl w-full flex flex-col h-full">
 
             <div data-req-anchor="select-mode-title" className="relative">
-              {renderRequirementMarker('SELECT_MODE-001', 'right-2 -top-1', 1)}
               <h2 className="text-lg font-medium text-gray-800 mb-2 text-center">请选择识别方式</h2>
               <p className="text-sm text-gray-500 mb-6 text-center">建议根据您的资料内容，选择合适的处理流程</p>
             </div>
@@ -4542,136 +5256,69 @@ export function UploadQuestionDialog({
               {/* 仅识别题目 */}
               <div data-req-anchor="select-mode-single-btn" className="relative">
                 {renderRequirementMarker('SELECT_MODE-002', 'right-2 top-2', 2)}
-              <button
-                onClick={() => handleModeSelect('questions-only')}
-                className="group p-4 bg-white rounded-xl border-2 border-gray-200 hover:border-blue-400 hover:shadow-lg transition-all text-left overflow-hidden w-full h-full flex flex-col"
-              >
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center group-hover:bg-blue-100 transition-colors shrink-0">
-                    <FileText className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div className="min-w-0 pt-0.5">
-                    <div className="font-medium text-gray-800">仅识别题目</div>
-                    <div className="text-xs text-gray-400 leading-relaxed">适合只包含题目，不包含答案的资料</div>
-                  </div>
-                </div>
-                {/* 步骤预览 */}
-                <div className="flex items-center gap-1 mb-3 px-2 py-1.5 bg-gray-50 rounded-lg">
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap">① 选择识别方式</span>
-                  <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap">② 框选并核对识别结果</span>
-                </div>
-                {/* 示例图 */}
-                <div className="rounded-lg overflow-hidden bg-gray-50 border border-gray-100 flex-1 flex items-center justify-center min-h-[220px]">
-                  <img
-                    src="/mode-single-example.jpg"
-                    alt="纯题目资料示例：仅包含题目的试卷"
-                    className="w-full h-full object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                </div>
-              </button>
+                <RecognitionModeCard
+                  mode="questions-only"
+                  icon={FileText}
+                  title="仅识别题目"
+                  scenario="适合只包含题目、不包含答案解析的资料"
+                  visualType="question-only"
+                  steps={['框选题目', 'OCR识别']}
+                  accent="blue"
+                  selected={workMode === 'questions-only'}
+                  onSelect={handleModeSelect}
+                />
               </div>
 
               {/* 题目+答案（同文件） */}
               <div data-req-anchor="select-mode-stepwise-btn" className="relative">
                 {renderRequirementMarker('SELECT_MODE-003', 'right-2 top-2', 3)}
-              <button
-                onClick={() => handleModeSelect('same-file')}
-                className="group p-4 bg-white rounded-xl border-2 border-gray-200 hover:border-purple-400 hover:shadow-lg transition-all text-left overflow-hidden w-full h-full flex flex-col"
-              >
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center group-hover:bg-purple-100 transition-colors shrink-0">
-                    <Layers className="w-5 h-5 text-purple-600" />
-                  </div>
-                  <div className="min-w-0 pt-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-800">题目+答案</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 font-medium">同文件</span>
-                    </div>
-                    <div className="text-xs text-gray-400 leading-relaxed mt-0.5">题目和答案解析在同一份资料中（无论是否紧挨排列）</div>
-                  </div>
-                </div>
-                {/* 步骤预览 */}
-                <div className="flex items-center gap-1 mb-3 px-2 py-1.5 bg-gray-50 rounded-lg">
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap">① 选择识别方式</span>
-                  <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap">② 框选并核对识别结果</span>
-                  <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap">③ 手动关联答案</span>
-                </div>
-                {/* 示例图 */}
-                <div className="grid grid-cols-2 gap-1.5 rounded-lg overflow-hidden bg-gray-50 border border-gray-100 p-1.5 flex-1 min-h-[220px]">
-                  <img
-                    src="/mode-stepwise-example-1.jpg"
-                    alt="含答案解析资料示例1"
-                    className="w-full h-full object-contain rounded"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                  <img
-                    src="/mode-stepwise-example-2.jpg"
-                    alt="含答案解析资料示例2"
-                    className="w-full h-full object-contain rounded"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                </div>
-              </button>
+                <RecognitionModeCard
+                  mode="same-file"
+                  icon={Layers}
+                  title="题目+答案"
+                  badge="同文件"
+                  scenario="适合题目与答案解析在同一份资料中的场景"
+                  visualType="same-file"
+                  steps={['自动框选', 'OCR识别']}
+                  accent="purple"
+                  selected={workMode === 'same-file'}
+                  onSelect={handleModeSelect}
+                />
               </div>
 
               {/* 题目+答案（不同文件） */}
               <div data-req-anchor="select-mode-cross-file-btn" className="relative">
-              <button
-                onClick={() => handleModeSelect('cross-file')}
-                className="group p-4 bg-white rounded-xl border-2 border-gray-200 hover:border-amber-400 hover:shadow-lg transition-all text-left overflow-hidden w-full h-full flex flex-col"
-              >
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center group-hover:bg-amber-100 transition-colors shrink-0">
-                    <Files className="w-5 h-5 text-amber-600" />
-                  </div>
-                  <div className="min-w-0 pt-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-800">题目+答案</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600 font-medium">不同文件</span>
-                    </div>
-                    <div className="text-xs text-gray-400 leading-relaxed mt-0.5">题目和答案解析分别在不同的文件中</div>
-                  </div>
-                </div>
-                {/* 步骤预览 */}
-                <div className="flex items-center gap-1 mb-3 px-2 py-1.5 bg-gray-50 rounded-lg">
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap">① 选择识别方式</span>
-                  <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap">② 框选并核对识别结果</span>
-                  <ArrowRight className="w-3 h-3 text-gray-400 shrink-0" />
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap">③ 手动关联答案</span>
-                </div>
-                {/* 示例图：双文件示意 */}
-                <div className="grid grid-cols-2 gap-2 rounded-lg overflow-hidden bg-gray-50 border border-gray-100 p-3 flex-1 min-h-[220px]">
-                  <div className="flex flex-col items-center justify-center bg-blue-50 rounded-lg gap-2">
-                    <FileText className="w-8 h-8 text-blue-400" />
-                    <span className="text-xs text-blue-600 font-medium">题目文件</span>
-                    <span className="text-[10px] text-blue-400">试卷/练习册</span>
-                  </div>
-                  <div className="flex flex-col items-center justify-center bg-amber-50 rounded-lg gap-2">
-                    <FileText className="w-8 h-8 text-amber-400" />
-                    <span className="text-xs text-amber-600 font-medium">答案文件</span>
-                    <span className="text-[10px] text-amber-400">答案解析</span>
-                  </div>
-                </div>
-              </button>
+                {renderRequirementMarker('SELECT_MODE-008', 'right-2 top-2', 4)}
+                <RecognitionModeCard
+                  mode="cross-file"
+                  icon={Files}
+                  title="题目+答案"
+                  badge="不同文件"
+                  scenario="适合题目文件与答案文件分别上传的场景"
+                  visualType="cross-file"
+                  steps={['分别识别', '自动关联']}
+                  accent="amber"
+                  selected={workMode === 'cross-file'}
+                  disabled={(uploadedFiles?.length ?? 0) < 2}
+                  disabledReason="该模式需要 2 个及以上文件"
+                  onSelect={handleModeSelect}
+                />
               </div>
             </div>
 
             {/* 已上传文件信息 */}
             {uploadedFiles && uploadedFiles.length > 0 && (
               <div data-req-anchor="select-mode-file-list" className="relative bg-gray-50 rounded-lg p-3 mt-3">
-                {renderRequirementMarker('SELECT_MODE-004', 'right-1 top-1', 4)}
-                <div className="text-xs text-gray-500 mb-2">已上传的文件：</div>
+                {renderRequirementMarker('SELECT_MODE-004', 'right-1 top-1', 6)}
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-gray-500">已上传的资料：</span>
+                  <button
+                    onClick={() => goToStep('upload_files')}
+                    className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    更换资料
+                  </button>
+                </div>
                 <div className="space-y-1">
                   {uploadedFiles.map((f, i) => {
                     const range = fileRanges?.[i];
@@ -4709,7 +5356,8 @@ export function UploadQuestionDialog({
 
                 return (
                 /* ========== 有数据态 ========== */
-                <div className="p-6">
+                <div data-req-anchor="upload-files-step.file-list" className="relative p-6">
+                  {renderRequirementMarker('UPLOAD_FILES_STEP-002', 'right-3 top-3')}
                   {/* 区块标题 */}
                   <div className="mb-4">
                     <h3 className="text-sm font-medium text-gray-800">已上传资料</h3>
@@ -4764,30 +5412,36 @@ export function UploadQuestionDialog({
                               </div>
                             </div>
                           </div>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <button className="text-gray-400 hover:text-red-500">
-                                <Trash2 className="w-5 h-5" />
-                              </button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent className="max-w-sm">
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>确认删除该文件？</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  将移除「{file.name}」，此操作不可撤销。
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>取消</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => onDeleteFile?.(idx)}
-                                  className="bg-red-600 hover:bg-red-700 text-white"
-                                >
-                                  确认删除
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                          <div
+                            data-req-anchor={idx === 0 ? 'upload-files-step.file-delete' : undefined}
+                            className="relative"
+                          >
+                            {idx === 0 && renderRequirementMarker('UPLOAD_FILES_STEP-003', 'right-0 -top-3')}
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <button className="text-gray-400 hover:text-red-500">
+                                  <Trash2 className="w-5 h-5" />
+                                </button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent className="max-w-sm">
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>确认删除该文件？</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    将移除「{file.name}」，此操作不可撤销。
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>取消</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => onDeleteFile?.(idx)}
+                                    className="bg-red-600 hover:bg-red-700 text-white"
+                                  >
+                                    确认删除
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
                         </div>
                       );
                     })}
@@ -4795,7 +5449,8 @@ export function UploadQuestionDialog({
 
                   {/* 24页超限警告 */}
                   {isPageLimitExceeded && (
-                    <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div data-req-anchor="upload-files-step.page-limit" className="relative mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                      {renderRequirementMarker('UPLOAD_FILES_STEP-006', 'right-2 top-2')}
                       <p className="text-xs text-amber-700 flex items-start gap-1.5">
                         <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                         <span>检测到文件共{totalOriginalPages}页，最多支持识别24页，请删除部分文件或自定义选择文件识别范围后，再继续操作</span>
@@ -4819,33 +5474,40 @@ export function UploadQuestionDialog({
 
                   {/* 底部操作栏 */}
                   <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                    <button
-                      onClick={() => onContinueUpload?.()}
-                      className="px-4 py-2 text-sm rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors flex items-center gap-1.5"
-                    >
-                      <CloudUpload className="w-4 h-4" /> 继续上传
-                    </button>
-                    <button
-                      onClick={() => {
-                        setFlowStep('select_mode');
-                        setFlowStage('cutting');
-                      }}
-                      disabled={isPageLimitExceeded}
-                      className={cn(
-                        "px-5 py-2 text-sm rounded-lg transition-colors flex items-center gap-1.5 font-medium",
-                        isPageLimitExceeded
-                          ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                          : "bg-emerald-500 text-white hover:bg-emerald-600"
-                      )}
-                    >
-                      下一步 <ArrowRight className="w-4 h-4" />
-                    </button>
+                    <div data-req-anchor="upload-files-step.continue-upload" className="relative">
+                      {renderRequirementMarker('UPLOAD_FILES_STEP-005', '-right-2 -top-3')}
+                      <button
+                        onClick={() => onContinueUpload?.()}
+                        className="px-4 py-2 text-sm rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors flex items-center gap-1.5"
+                      >
+                        <CloudUpload className="w-4 h-4" /> 继续上传
+                      </button>
+                    </div>
+                    <div data-req-anchor="upload-files-step.next" className="relative">
+                      {renderRequirementMarker('UPLOAD_FILES_STEP-011', '-right-2 -top-3')}
+                      <button
+                        onClick={() => {
+                          setFlowStep('select_mode');
+                          setFlowStage('cutting');
+                        }}
+                        disabled={isPageLimitExceeded}
+                        className={cn(
+                          "px-5 py-2 text-sm rounded-lg transition-colors flex items-center gap-1.5 font-medium",
+                          isPageLimitExceeded
+                            ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                            : "bg-emerald-500 text-white hover:bg-emerald-600"
+                        )}
+                      >
+                        下一步 <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
                 );
               })() : (
                 /* ========== 无数据态 ========== */
-                <div className="p-8 flex flex-col items-center">
+                <div data-req-anchor="upload-files-step.empty-upload" className="relative p-8 flex flex-col items-center">
+                  {renderRequirementMarker('UPLOAD_FILES_STEP-004', 'right-3 top-3')}
                   {/* 上传图标 */}
                   <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-4">
                     <CloudUpload className="w-8 h-8 text-gray-300" />
@@ -4887,7 +5549,12 @@ export function UploadQuestionDialog({
         const selectedCount = editRangeEnd - editRangeStart + 1;
         return (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[65]" onClick={() => setEditingRangeIndex(null)}>
-            <div className="bg-white rounded-lg shadow-xl w-[520px] max-w-[90vw]" onClick={e => e.stopPropagation()}>
+            <div
+              data-req-anchor="upload-files-step.range-dialog"
+              className="relative bg-white rounded-lg shadow-xl w-[520px] max-w-[90vw]"
+              onClick={e => e.stopPropagation()}
+            >
+              {renderRequirementMarker('UPLOAD_FILES_STEP-007', 'right-2 top-2')}
               <div className="flex items-center justify-between p-4 border-b">
                 <h3 className="font-medium text-gray-800">选择识别范围</h3>
                 <button onClick={() => setEditingRangeIndex(null)} className="w-6 h-6 rounded-full flex items-center justify-center hover:bg-gray-100">
@@ -4962,7 +5629,6 @@ export function UploadQuestionDialog({
         >
           <div className="relative bg-white rounded-lg shadow-xl w-[480px] max-w-[90vw]">
             {renderRequirementMarker('SELECT_MODE-005', 'right-2 top-2', 5)}
-            {renderRequirementMarker('BOX_STEP-004', 'right-8 top-2', 4)}
             <div className="flex items-center justify-between px-4 py-3 border-b bg-emerald-50 rounded-t-lg">
               <h3 className="font-medium text-emerald-600">指定文件用途</h3>
               <button onClick={() => { setShowFileRolePanel(false); setWorkMode(null); setFileRolePanelFileIds(null); }} className="w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center text-white hover:bg-emerald-600">
@@ -5073,110 +5739,10 @@ export function UploadQuestionDialog({
           {/* 模式三（跨文件）：文件标签已移除，改为每页顶部标签显示 */}
 
           {/* ==================== 框选&识别页面：三层布局 ==================== */}
-          {(flowStep === 'frame_and_review') && (
+          {(isSelectionStep || isReviewStep) && (
             <>
-              {/* 识别模式提示 */}
-              {workMode && (
-                <div className="px-4 py-1.5 bg-gray-50 border-b flex items-center gap-2">
-                  <span className="text-xs text-gray-400">识别模式：</span>
-                  <span className={cn(
-                    "text-xs font-medium",
-                    workMode === 'questions-only'
-                      ? "text-blue-600"
-                      : workMode === 'same-file'
-                        ? "text-purple-600"
-                        : "text-amber-600"
-                  )}>
-                    {workMode === 'questions-only' ? '仅识别题目' : workMode === 'same-file' ? '题目+答案（同文件）' : '题目+答案（不同文件）'}
-                  </span>
-                </div>
-              )}
 
               {/* 第一层：操作提示 + 统计信息 + 操作按钮 */}
-              <div data-req-anchor="box-step-info-bar" className="relative bg-[#eef1f4] border-b">
-                {renderRequirementMarker('BOX_STEP-001', 'right-2 top-1', 1)}
-                {renderRequirementMarker('BOX_STEP-009', 'left-2 top-1', 9)}
-                <div className="flex items-center px-4 py-2.5">
-                  {/* 左侧：操作提示 */}
-                  <p className="text-xs text-gray-400 flex-1 min-w-0 mr-4">
-                    若系统框选有误或漏框选，可在资料上，以按住鼠标并拖动的方式框选区域
-                  </p>
-                  {/* 中间+右侧：统计 + 按钮 */}
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    {/* 框选数 */}
-                    <div className="flex flex-col items-center bg-white/70 rounded-lg px-4 py-1.5 min-w-[56px]">
-                      <div className="flex items-baseline gap-0.5">
-                        <span className={cn(
-                          "text-[26px] font-bold tabular-nums leading-none",
-                          isAutoDetecting ? "text-gray-300" : "text-emerald-600"
-                        )}>{questionBoxes.length}</span>
-                        <span className={cn(
-                          "text-xs font-medium",
-                          isAutoDetecting ? "text-gray-300" : "text-gray-500"
-                        )}>题</span>
-                      </div>
-                      <span className={cn(
-                        "text-[11px] font-medium mt-0.5",
-                        isAutoDetecting ? "text-gray-300" : "text-gray-500"
-                      )}>已框选</span>
-                    </div>
-                    {/* 选中数 */}
-                    <div className="flex flex-col items-center bg-white/70 rounded-lg px-4 py-1.5 min-w-[56px]">
-                      <div className="flex items-baseline gap-0.5">
-                        <span className={cn(
-                          "text-[26px] font-bold tabular-nums leading-none",
-                          isAutoDetecting ? "text-gray-300" : "text-blue-600"
-                        )}>{selectedCount}</span>
-                        <span className={cn(
-                          "text-xs font-medium",
-                          isAutoDetecting ? "text-gray-300" : "text-gray-500"
-                        )}>题</span>
-                      </div>
-                      <span className={cn(
-                        "text-[11px] font-medium mt-0.5",
-                        isAutoDetecting ? "text-gray-300" : "text-gray-500"
-                      )}>已选中</span>
-                    </div>
-                    {/* 操作按钮 */}
-                    { (
-                      <button
-                        onClick={() => { if (questionBoxes.length > 0 && !isAutoDetecting) setShowClearConfirm(true); }}
-                        disabled={questionBoxes.length === 0 || isAutoDetecting}
-                        className={cn(
-                          "flex items-center gap-1 text-xs font-medium transition-colors flex-shrink-0 ml-1",
-                          questionBoxes.length > 0 && !isAutoDetecting
-                            ? "text-gray-500 hover:text-red-500"
-                            : "text-gray-300 cursor-not-allowed"
-                        )}
-                        title="清空全部框选"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" /> 一键清空
-                      </button>
-                    )}
-                    { (
-                      <label className={cn(
-                        "flex items-center gap-1.5 whitespace-nowrap ml-1",
-                        questionBoxes.length > 0 && !isAutoDetecting ? "cursor-pointer" : "cursor-not-allowed"
-                      )}>
-                        <input
-                          type="checkbox"
-                          disabled={questionBoxes.length === 0 || isAutoDetecting}
-                          checked={questionBoxes.length > 0 && questionBoxes.every(b => b.isSelected)}
-                          onChange={handleSelectAll}
-                          className={cn(
-                            "w-4 h-4 rounded",
-                            questionBoxes.length > 0 && !isAutoDetecting ? "text-emerald-500 border-gray-300" : "text-gray-300 border-gray-200"
-                          )}
-                        />
-                        <span className={cn(
-                          "text-xs font-medium",
-                          questionBoxes.length > 0 && !isAutoDetecting ? "text-gray-500" : "text-gray-300"
-                        )}>全选</span>
-                      </label>
-                    )}
-                  </div>
-                </div>
-              </div>
 
               {/* 一键清空切题框确认弹窗 */}
               <AlertDialog open={showClearConfirm} onOpenChange={setShowClearConfirm}>
@@ -5184,7 +5750,7 @@ export function UploadQuestionDialog({
                   <AlertDialogHeader>
                     <AlertDialogTitle>确认清空所有切题框？</AlertDialogTitle>
                     <AlertDialogDescription>
-                      将删除全部 {questionBoxes.length} 个切题框，此操作不可撤销。
+                      将删除当前可见的 {totalBoxCount} 个切题框，此操作不可撤销。
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -5220,17 +5786,17 @@ export function UploadQuestionDialog({
                 </AlertDialogContent>
               </AlertDialog>
 
-              {/* 修改资料/识别方式 → 清空识别结果确认弹窗 */}
+              {/* 更换资料/识别方式 → 清空识别结果确认弹窗 */}
               <AlertDialog open={showClearRecognitionConfirm !== null} onOpenChange={() => setShowClearRecognitionConfirm(null)}>
                 <AlertDialogContent className="max-w-sm">
                   <AlertDialogHeader>
                     <AlertDialogTitle>
-                      {showClearRecognitionConfirm === 'modify_files' ? '确认修改资料吗？' : '确认修改识别方式吗？'}
+                      {showClearRecognitionConfirm === 'modify_files' ? '确认更换资料吗？' : '确认修改识别方式吗？'}
                     </AlertDialogTitle>
                     <AlertDialogDescription>
                       {showClearRecognitionConfirm === 'modify_files'
-                        ? '修改资料将清空当前已识别的题目和框选结果，并且需要重新选择识别方式'
-                        : '修改识别方式将清空当前已识别的题目和框选结果'
+                        ? '更换资料，将清空当前已识别的内容，并且需要重新选择识别方式。'
+                        : '修改识别方式，将清空已有的识别内容。'
                       }
                     </AlertDialogDescription>
                   </AlertDialogHeader>
@@ -5244,6 +5810,7 @@ export function UploadQuestionDialog({
                         setQuestions([]);
                         setAnswers([]);
                         setQuestionBoxes([]);
+                        setReviewHiddenBoxIds(new Set());
                         setFileRoles([]);
                         setWorkMode(null);
                         if (action === 'modify_files') {
@@ -5260,124 +5827,183 @@ export function UploadQuestionDialog({
                 </AlertDialogContent>
               </AlertDialog>
 
-              {/* 第三层：操作按钮栏 */}
-              <div className="flex items-center justify-between px-4 py-2 bg-white border-b">
-                <div className="flex items-center gap-2">
-                  {/* 修改资料 */}
-                  <button
-                    onClick={() => {
-                      if (questions.length > 0) {
-                        setShowClearRecognitionConfirm('modify_files');
-                      } else {
-                        goToStep('upload_files');
+              {/* 加入试卷 — 未匹配答案解析确认弹窗 */}
+              <AlertDialog open={showAddToPaperConfirm} onOpenChange={setShowAddToPaperConfirm}>
+                <AlertDialogContent className="max-w-sm">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>确认加入试卷吗？</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      当前还有{reviewStats.incompleteItemCount}道题的答案/解析没有补充，您可以在后续组卷页面使用AI批量补充功能，进行补充。
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel onClick={() => {
+                      setShowAddToPaperConfirm(false);
+                      if (reviewStats.firstIncompleteQuestionId) {
+                        const firstEl = document.querySelector(`[data-question-id="${reviewStats.firstIncompleteQuestionId}"]`) as HTMLElement | null;
+                        firstEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                       }
-                    }}
-                    className="flex items-center gap-1 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 whitespace-nowrap rounded hover:bg-gray-100 transition-colors"
-                    title="返回步骤1修改已上传的资料文件"
-                  >
-                    <FileText className="w-4 h-4" />修改资料
-                  </button>
-                  {/* 修改识别方式 */}
-                  <button
-                    onClick={() => {
-                      if (questions.length > 0) {
-                        setShowClearRecognitionConfirm('modify_mode');
-                      } else {
-                        goToStep('select_mode');
-                      }
-                    }}
-                    className="flex items-center gap-1 px-3 py-1 text-sm text-gray-600 hover:text-gray-800 whitespace-nowrap rounded hover:bg-gray-100 transition-colors"
-                    title="返回步骤2重新选择识别方式"
-                  >
-                    <RefreshCw className="w-4 h-4" />修改识别方式
-                  </button>
-                  {/* 补充资料（原继续上传） */}
-                  {onSupplementUpload && (
-                    <button
+                    }}>取消</AlertDialogCancel>
+                    <AlertDialogAction
                       onClick={() => {
-                        if (isAutoDetecting) {
-                          setProcessingMessage('正在处理文件，请稍后再补充资料');
-                          setTimeout(() => setProcessingMessage(''), 3000);
-                          return;
-                        }
-                        onSupplementUpload();
+                        setShowAddToPaperConfirm(false);
+                        doAddToPaper();
                       }}
-                      className={cn(
-                        "flex items-center gap-1 px-3 py-1 text-sm rounded whitespace-nowrap transition-colors",
-                        isAutoDetecting
-                          ? "text-gray-400 cursor-not-allowed"
-                          : "text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50"
-                      )}
-                      title={isAutoDetecting ? '正在处理文件，请稍后再补充资料' : '补充新增资料，不影响当前已处理结果'}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white"
                     >
-                      <CloudUpload className="w-4 h-4" />补充资料
-                    </button>
-                  )}
-                </div>
-                <div data-req-anchor="box-step-start-btn" className="relative flex items-center gap-2">
-                  {renderRequirementMarker('BOX_STEP-002', 'right-1 -top-1', 2)}
-                  {/* 开始识别按钮 */}
-                  <button
-                    onClick={handleBatchMove}
-                    disabled={selectedCount === 0 || isProcessing || isAutoDetecting}
-                    className={cn(
-                      "px-4 py-1 rounded text-sm flex items-center gap-1 whitespace-nowrap font-medium",
-                      selectedCount > 0 && !isProcessing && !isAutoDetecting ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm" : "bg-gray-200 text-gray-400 cursor-not-allowed"
-                    )}
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    {workMode === 'cross-file' ? '开始匹配' : '开始识别'}{selectedCount > 0 ? `(${selectedCount})` : ''}
-                  </button>
-                </div>
-              </div>
+                      确认
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
 
-	              {/* 全局匹配答案按钮（仅分步模式-识别题目阶段显示） */}
-              {workMode !== 'questions-only' && questions.length > 0 && flowStep === 'frame_and_review' && !questions.some(q => q.answer || q.analysis) && (
-                <div data-req-anchor="review-step-global-match-btn" className="relative px-4 py-1.5 bg-white border-b flex items-center justify-end">
-                  {renderRequirementMarker('REVIEW_STEP-011', 'right-2 top-1')}
-                  <button
-                    onClick={() => handleGlobalMatchAnswers()}
-                    disabled={isProcessing}
-                    className={cn(
-                      "flex items-center gap-1 px-3 py-1 text-xs rounded whitespace-nowrap transition-all",
-                      isProcessing
-                        ? "bg-gray-200 text-gray-400 cursor-not-allowed border border-gray-300"
-                        : "text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border border-indigo-300"
-                    )}
-                    title="AI 从整页资料中自动定位答案区域，匹配到已有题目"
-                  >
-                    <Globe className="w-3 h-3" /> 全局匹配答案{isProcessing && ' 中...'}
-                  </button>
-                </div>
-              )}
-
-              {/* 手动关联答案按钮（模式二/三：有题目时显示） */}
-              {(workMode === 'same-file' || workMode === 'cross-file') && questions.length > 0 && flowStep === 'frame_and_review' && (
-                <div className="px-4 py-1.5 bg-white border-b flex items-center justify-end">
-                  <button
-                    onClick={() => goToStep('manual_link')}
-                    className="flex items-center gap-1 px-3 py-1 text-xs rounded whitespace-nowrap transition-all text-orange-600 hover:text-orange-800 hover:bg-orange-50 border border-orange-300"
-                    title="手动框选答案区域并关联到对应题目"
-                  >
-                    <Link2Icon className="w-3 h-3" /> 手动关联答案
-                  </button>
-                </div>
-              )}
             </>
           )}
 
-          {/* 步骤3 - 手动关联答案提示 */}
-          {(workMode === 'same-file' || workMode === 'cross-file') && flowStep === 'manual_link' && (
+          {/* 第四步 - 手动关联答案提示 */}
+          {(workMode === 'same-file' || workMode === 'cross-file') && isReviewStep && manualAnswerLinking && (
             <div className="px-4 py-2 bg-gray-50 border-b">
               <p className="text-xs text-emerald-600">
-                在左侧资料区框选答案或解析区域，框选后将自动弹出关联题号弹窗
+                {manualLinkTarget
+                  ? `在左侧资料区框选内容，框选后将自动填入第${questions.find(q => q.id === manualLinkTarget.questionId)?.number ?? ''}题${manualLinkTarget.field === 'answer' ? '答案' : '解析'}`
+                  : '在左侧资料区框选答案或解析区域，框选后将自动弹出关联题号弹窗'}
               </p>
             </div>
           )}
 
           {/* 资料预览区 - 多页滚动显示 */}
-          <div data-req-anchor="box-step-selection-layer" className="relative min-h-0 flex-1">
-            {flowStep === 'frame_and_review' && renderRequirementMarker('BOX_STEP-010', 'left-2 top-2 z-50', 10)}
+          <div data-req-anchor="box-step-selection-layer" className="relative min-h-0 flex-1 group/doc-area">
+            {/* 右边缘悬浮球 — 中部：开始识别 / 全选 / 删除 */}
+            {showBoxStepFloatingActions && (
+              <div className="absolute right-3 top-1/2 z-30 flex -translate-y-1/2 flex-col items-center gap-2">
+                <div data-req-anchor="box-step-start-btn" className="relative flex flex-col items-center gap-1">
+                  {renderRequirementMarker('BOX_STEP-002', '-left-1 -top-1', 2)}
+                  <button
+                    onClick={handleBatchMove}
+                    disabled={selectedCount === 0 || isProcessing || isAutoDetecting}
+                    className={cn(
+                      "w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all",
+                      selectedCount > 0 && !isProcessing && !isAutoDetecting
+                        ? "bg-emerald-500 text-white hover:bg-emerald-600 hover:scale-110"
+                        : "bg-gray-300 text-gray-400 cursor-not-allowed"
+                    )}
+                    title={`开始识别(${selectedCount})`}
+                  >
+                    <Sparkles className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={handleBatchMove}
+                    disabled={selectedCount === 0 || isProcessing || isAutoDetecting}
+                    className={cn(
+                      "rounded-full border px-2 py-0.5 text-[10px] font-medium leading-tight shadow-sm transition-colors",
+                      selectedCount > 0 && !isProcessing && !isAutoDetecting
+                        ? "border-emerald-100 bg-white text-emerald-700 hover:bg-emerald-50"
+                        : "border-gray-200 bg-white text-gray-400 cursor-not-allowed"
+                    )}
+                    title={`开始识别(${selectedCount})`}
+                  >
+                    开始识别
+                  </button>
+                </div>
+                {isSelectionStep && (
+                  <div data-req-anchor="box-step-bulk-actions" className="relative flex flex-col items-center gap-2">
+                    <div className="flex flex-col items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => { if (canOperateBoxes) setShowClearConfirm(true); }}
+                        disabled={!canOperateBoxes}
+                        className={cn(
+                          "w-9 h-9 rounded-full flex items-center justify-center border shadow-md transition-colors",
+                          canOperateBoxes
+                            ? "border-red-200 bg-white text-red-400 hover:bg-red-50 hover:border-red-400 hover:text-red-500"
+                            : "border-gray-200 bg-white text-gray-300 cursor-not-allowed"
+                        )}
+                        title="清空全部框选"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { if (canOperateBoxes) setShowClearConfirm(true); }}
+                        disabled={!canOperateBoxes}
+                        className={cn(
+                          "rounded-full border px-2 py-0.5 text-[10px] font-medium leading-tight shadow-sm transition-colors",
+                          canOperateBoxes
+                            ? "border-red-100 bg-white text-red-500 hover:bg-red-50"
+                            : "border-gray-200 bg-white text-gray-400 cursor-not-allowed"
+                        )}
+                        title="清空全部框选"
+                      >
+                        清空
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* 右边缘悬浮球 — 右下角：更多工具 */}
+            {showBoxStepFloatingActions && isSelectionStep && (
+              <div data-req-anchor="box-step-more-tools" className="absolute right-3 bottom-4 z-30 flex flex-col items-center gap-1">
+                {renderRequirementMarker('BOX_STEP-013', '-left-1 -top-2')}
+                {moreToolsOpen && (
+                  <div className="mb-1 flex flex-col gap-1.5 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+                    <div data-req-anchor="box-step-modify-files" className="relative">
+                      {renderRequirementMarker('BOX_STEP-012', 'right-0 -top-2')}
+                      <button
+                        onClick={() => {
+                          setMoreToolsOpen(false);
+                          if (questions.length > 0) {
+                            setShowClearRecognitionConfirm('modify_files');
+                          } else {
+                            goToStep('upload_files');
+                          }
+                        }}
+                        className="flex w-full items-center gap-1.5 rounded px-3 py-2 text-xs whitespace-nowrap text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-800"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        更换资料
+                      </button>
+                    </div>
+                    {onSupplementUpload && (
+                      <div data-req-anchor="box-step-supplement-upload" className="relative">
+                        {renderRequirementMarker('BOX_STEP-005', 'right-0 -top-2')}
+                        <button
+                          onClick={() => {
+                            if (isAutoDetecting) {
+                              setProcessingMessage('正在处理文件，请稍后再补充资料');
+                              setTimeout(() => setProcessingMessage(''), 3000);
+                              return;
+                            }
+                            setMoreToolsOpen(false);
+                            onSupplementUpload();
+                          }}
+                          className="flex w-full items-center gap-1.5 rounded px-3 py-2 text-xs whitespace-nowrap text-emerald-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
+                        >
+                          <CloudUpload className="w-3.5 h-3.5" />
+                          补充资料
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <button
+                  onClick={() => setMoreToolsOpen((open) => !open)}
+                  className={cn(
+                    "w-9 h-9 rounded-full flex items-center justify-center border shadow-md transition-colors",
+                    moreToolsOpen
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                      : "border-emerald-100 bg-white text-emerald-600 hover:bg-emerald-50"
+                  )}
+                  title="更多工具"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+                <span className="rounded-full border border-emerald-100 bg-white px-2 py-0.5 text-[10px] font-medium leading-tight text-emerald-700 shadow-sm">
+                  更多工具
+                </span>
+              </div>
+            )}
+            {(isSelectionStep || isReviewStep) && renderRequirementMarker('BOX_STEP-010', 'left-2 top-2 z-50', 10)}
             <div
               ref={containerRef}
               className="h-full overflow-auto p-4 flex flex-col items-center gap-4"
@@ -5405,18 +6031,19 @@ export function UploadQuestionDialog({
                 pageOrder.map((originalIndex) => {
                 const pageImage = pageImages[originalIndex];
                 const pageNum = originalIndex + 1;
-                const pageBoxes = questionBoxes.filter(box =>
-                  box.pageNumber === pageNum ||
-                  (box.endPageNumber === pageNum && box.endPageHeight) // 跨页框的第二部分
+                const pageBoxes = visibleQuestionBoxes.filter(box =>
+                  (box.pageNumber === pageNum ||
+                  (box.endPageNumber === pageNum && box.endPageHeight)) // 跨页框的第二部分
                 );
                 const pageAnswers = answers.filter(a => a.pageNumber === pageNum);
                 const pageRole = getPageFileRole(pageImage);
+                const canDrawCurrentPage = canDrawOnPage(pageNum);
 
                 return (
                   <div
                     key={pageNum}
                     data-page={pageNum}
-                    className="relative bg-white shadow-lg"
+                    className={cn("relative bg-white shadow-lg", !canDrawCurrentPage && "cursor-not-allowed")}
                     style={{
                       width: displayWidth,
                       transform: `scale(${zoom / 100})`,
@@ -5450,13 +6077,17 @@ export function UploadQuestionDialog({
                       />
                     )}
 
+                    {!canDrawCurrentPage && (
+                      <div className="absolute inset-0 z-20 cursor-not-allowed bg-amber-50/10" />
+                    )}
+
                     {/* 题目框 - 切图阶段显示可编辑框（识别题目阶段） */}
-                    {flowStep === 'frame_and_review' && (
-                      <div className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-0.5 rounded z-40 pointer-events-none">
-                        本页 {pageBoxes.length} 框 / 共 {questionBoxes.length} 框
+                    {(isSelectionStep || isReviewStep) && (
+                      <div className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1.5 rounded z-40 flex items-center gap-2">
+                        <span>已选中 <span className="font-medium">{selectedCount}</span> 题 / 已框选 <span className="font-medium">{totalBoxCount}</span> 题</span>
                       </div>
                     )}
-                    {flowStep === 'frame_and_review' && pageBoxes.map((box) => {
+                    {(isSelectionStep || isReviewStep) && pageBoxes.map((box) => {
                       const renderStyle = getBoxRenderStyle(box, pageNum);
                       if (!renderStyle) return null;
                       return (
@@ -5744,7 +6375,7 @@ export function UploadQuestionDialog({
                     )}
 
                     {/* 答案标记（检查阶段显示） */}
-                    {(flowStep === 'manual_link' || (workMode === 'questions-only' && flowStage === 'matched')) && pageAnswers.map((answer) => {
+                    {((manualAnswerLinking && isReviewStep) || (workMode === 'questions-only' && flowStep === 'review' && flowStage === 'matched')) && pageAnswers.map((answer) => {
                       // 根据questionId找到对应的题目，获取题号
                       const linkedQuestion = answer.questionId ? questions.find(q => q.id === parseInt(answer.questionId as string)) : null;
                       
@@ -5798,7 +6429,7 @@ export function UploadQuestionDialog({
               {isRecognitionFailure ? (
                 <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
               ) : (
-                <Loader2 className={cn("w-4 h-4 text-emerald-500 flex-shrink-0", !isRecognitionPaused && "animate-spin")} />
+                <Loader2 className="w-4 h-4 text-emerald-500 flex-shrink-0 animate-spin" />
               )}
               <span className={cn(
                 "text-xs flex-1",
@@ -5808,11 +6439,6 @@ export function UploadQuestionDialog({
               </span>
               <div data-req-anchor="box-step-pause-cancel-btn" className="relative flex items-center gap-1.5">
                 {renderRequirementMarker('BOX_STEP-007', 'right-0 -top-1', 7)}
-                {isRecognitionPaused ? (
-                  <button onClick={handleResumeRecognition} className="px-2.5 py-0.5 text-[11px] font-medium rounded-full bg-emerald-500 text-white hover:bg-emerald-600 transition-colors">继续识别</button>
-                ) : (
-                  <button onClick={handlePauseRecognition} className="px-2.5 py-0.5 text-[11px] font-medium rounded-full bg-amber-500 text-white hover:bg-amber-600 transition-colors">暂停识别</button>
-                )}
                 <button onClick={handleCancelRecognition} className="px-2.5 py-0.5 text-[11px] font-medium rounded-full bg-gray-200 text-gray-600 hover:bg-gray-300 transition-colors">取消识别</button>
               </div>
             </div>
@@ -5831,30 +6457,25 @@ export function UploadQuestionDialog({
                 {isRecognitionFailure ? (
                   <AlertCircle className="w-6 h-6 text-red-500" />
                 ) : (
-                  <Loader2 className={cn("w-6 h-6 text-emerald-500", !isRecognitionPaused && "animate-spin")} />
+                  <Loader2 className="w-6 h-6 text-emerald-500 animate-spin" />
                 )}
                 <p className={cn("text-sm font-medium text-center", isRecognitionFailure ? "text-red-700" : "text-emerald-800")}>
                   {processingMessage || '正在处理中...'}
                 </p>
                 <div data-req-anchor="box-step-pause-cancel-btn" className="relative flex items-center gap-2 mt-1">
                   {renderRequirementMarker('BOX_STEP-007', 'right-1 top-0', 7)}
-                  {isRecognitionPaused ? (
-                    <button onClick={handleResumeRecognition} className="px-4 py-1.5 text-xs font-medium rounded-full bg-emerald-500 text-white hover:bg-emerald-600 transition-colors">继续识别</button>
-                  ) : (
-                    <button onClick={handlePauseRecognition} className="px-4 py-1.5 text-xs font-medium rounded-full bg-amber-500 text-white hover:bg-amber-600 transition-colors">暂停识别</button>
-                  )}
                   <button onClick={handleCancelRecognition} className="px-4 py-1.5 text-xs font-medium rounded-full bg-gray-200 text-gray-600 hover:bg-gray-300 transition-colors">取消识别</button>
                 </div>
               </div>
             </div>
-          ) : (flowStep === 'frame_and_review' && questions.length === 0 && !isProcessing) ? (
+          ) : (isSelectionStep && !isProcessing) ? (
             /* ====== 空状态引导（识别题目阶段）====== */
             <div data-req-anchor="box-step-empty-state" className="relative flex-1 flex flex-col items-center justify-center p-6 overflow-hidden">
               {renderRequirementMarker('BOX_STEP-003', 'right-2 top-2', 3)}
               <div className="border rounded-lg p-4 max-w-md w-full bg-emerald-50 border-emerald-200">
                 <p className="text-sm font-medium text-emerald-800">
                   {workMode === 'cross-file'
-                    ? '框选题目文件中的题目区域并选中后，点击「开始匹配」，小乐会为您自动识别题目，并从答案文件中匹配对应的答案与解析。完成匹配后，您可在右侧以图片或文字的形式查看每道题'
+                    ? '框选题目文件中的题目区域并选中后，点击「开始识别」，小乐会为您自动识别题目，并从答案文件中匹配对应的答案与解析。完成匹配后，您可在右侧以图片或文字的形式查看每道题'
                     : workMode === 'same-file'
                       ? '框选题目并选中后，点击「开始识别」，小乐会为您自动识别题目，并进行题目和答案的自动匹配。完成识别后，您可在右侧以图片或文字的形式分模块查看每道题的题干与答案/解析'
                       : '框选题目并选中后，点击「开始识别」，小乐会自动为您识别题目，完成识别后，您可在右侧以图片或文字的形式分模块查看每道题目'
@@ -5881,8 +6502,8 @@ export function UploadQuestionDialog({
                 {viewMode === 'recognize' && <span className="text-xs text-orange-500 bg-orange-50 px-2 py-0.5 rounded">请注意甄别AI识别内容</span>}
               </div>
 
-              {/* 匹配结果提示（步骤3显示） */}
-              {(workMode === 'same-file' || workMode === 'cross-file') && flowStep === 'manual_link' && (
+              {/* 匹配结果提示（第四步显示） */}
+              {(workMode === 'same-file' || workMode === 'cross-file') && flowStep === 'review' && (
                 <div data-req-anchor="review-step-match-banner" className="relative px-4 py-2 bg-orange-50 border-b border-orange-200">
                   {renderRequirementMarker('REVIEW_STEP-001', 'right-2 top-1', 10)}
                   {!matchBannerCollapsed ? (
@@ -6090,7 +6711,12 @@ export function UploadQuestionDialog({
                       <div className="p-3">
                         {/* 题型选择器行 */}
                         <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
+                          <div
+                            data-req-anchor={question.id === firstQuestionWithTypeSelectorId ? 'review-step-question-type-guard' : undefined}
+                            className="relative flex items-center gap-2"
+                          >
+                            {question.id === firstQuestionWithTypeSelectorId &&
+                              renderRequirementMarker('REVIEW_STEP-017', 'right-0 -top-3')}
                             <select value={question.questionType} onChange={(e) => handleUpdateQuestionType(question.id, e.target.value)} className="px-2 py-1 text-xs border rounded bg-white">
                               {questionTypes.map(type => (<option key={type} value={type}>{type}</option>))}
                             </select>
@@ -6391,7 +7017,12 @@ export function UploadQuestionDialog({
 
                         {/* 父题答案输入：无子题时常规显示；有子题但答案未能按标记拆分时保留父题区供人工拆分 */}
                         {workMode !== 'questions-only' && (!(compoundQuestionTypes.includes(question.questionType) && (question.subQuestions || []).length > 0) || getQuestionMatchInfo(question).needsManualSplit) && (
-                        <>
+                        <div
+                          data-req-anchor={question.id === firstQuestionWithParentAnswerClearId ? 'review-step-answer-clear' : undefined}
+                          className="relative"
+                        >
+                        {question.id === firstQuestionWithParentAnswerClearId &&
+                          renderRequirementMarker('REVIEW_STEP-018', 'right-1 top-1')}
                         {getQuestionMatchInfo(question).needsManualSplit && (
                           <div className="mb-2 rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700">
                             答案解析待人工拆分：当前内容保留在父题答案/解析区，请核对后拆到对应子题。
@@ -6399,7 +7030,24 @@ export function UploadQuestionDialog({
                         )}
                         <div className="mb-2">
                           <div className="flex items-center justify-between mb-1">
-                            <label className="text-xs font-medium text-gray-500">【答案】</label>
+                            <div className="flex items-center gap-1">
+                              <label className="text-xs font-medium text-gray-500">【答案】</label>
+                              <button
+                                type="button"
+                                onClick={() => handleDirectedManualLinkEntryClick(question.id, 'answer')}
+                                disabled={isProcessing || answerProcessingForQuestionIds.has(question.id)}
+                                className={cn(
+                                  "p-0.5 rounded text-gray-300 transition-colors",
+                                  manualLinkTarget?.questionId === question.id && manualLinkTarget.field === 'answer'
+                                    ? "bg-orange-50 text-orange-500"
+                                    : "hover:bg-orange-50 hover:text-orange-500",
+                                  (isProcessing || answerProcessingForQuestionIds.has(question.id)) && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-gray-300"
+                                )}
+                                title="框选内容并填入本题答案"
+                              >
+                                <Link2Icon className="w-3 h-3" />
+                              </button>
+                            </div>
                             {(question.answer || (question.blankAnswers && question.blankAnswers.some(b => b?.trim()))) && (
                               <button
                                 type="button"
@@ -6487,7 +7135,24 @@ export function UploadQuestionDialog({
                         {/* 解析输入（所有题型都显示） */}
                         <div className="mb-2">
                           <div className="flex items-center justify-between mb-1">
-                            <label className="text-xs font-medium text-gray-500">【解析】</label>
+                            <div className="flex items-center gap-1">
+                              <label className="text-xs font-medium text-gray-500">【解析】</label>
+                              <button
+                                type="button"
+                                onClick={() => handleDirectedManualLinkEntryClick(question.id, 'analysis')}
+                                disabled={isProcessing || answerProcessingForQuestionIds.has(question.id)}
+                                className={cn(
+                                  "p-0.5 rounded text-gray-300 transition-colors",
+                                  manualLinkTarget?.questionId === question.id && manualLinkTarget.field === 'analysis'
+                                    ? "bg-orange-50 text-orange-500"
+                                    : "hover:bg-orange-50 hover:text-orange-500",
+                                  (isProcessing || answerProcessingForQuestionIds.has(question.id)) && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-gray-300"
+                                )}
+                                title="框选内容并填入本题解析"
+                              >
+                                <Link2Icon className="w-3 h-3" />
+                              </button>
+                            </div>
                             {question.analysis?.trim() && (
                               <button
                                 type="button"
@@ -6528,7 +7193,7 @@ export function UploadQuestionDialog({
                             </div>
                           )}
                         </div>
-                        </>
+                        </div>
                         )}
 
                         {/* 复合题：子题答案区（仅当有子题时显示；一步识别模式不显示） */}
@@ -6539,16 +7204,32 @@ export function UploadQuestionDialog({
                           >
                             {question.id === firstAnswerSplitRuleQuestionId &&
                               renderRequirementMarker('REVIEW_STEP-010', 'right-1 top-2')}
+                            <div
+                              data-req-anchor={!firstQuestionWithParentAnswerClearId && question.id === firstQuestionWithSubAnswerClearId ? 'review-step-answer-clear' : undefined}
+                              className="relative"
+                            >
+                            {!firstQuestionWithParentAnswerClearId && question.id === firstQuestionWithSubAnswerClearId &&
+                              renderRequirementMarker('REVIEW_STEP-018', 'right-1 top-0')}
                             <div className="text-xs font-medium text-gray-500 mb-2">子题答案</div>
                             <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                             {(question.subQuestions || []).map((sub, subIndex) => (
                               <div key={sub.id} className="bg-gray-50 rounded-md px-3 py-2.5">
-                                <div className="flex items-center gap-2 mb-2">
-                                  <span className="text-sm font-medium text-gray-700">{SUB_NUMBERS[subIndex] || `${subIndex + 1}`}</span>
-                                  <span className="text-xs text-gray-400 px-1 py-0.5 bg-white rounded border">{sub.questionType}</span>
-                                  {isFillBlankType(sub.questionType) && (sub.blankCount || 1) > 1 && (
-                                    <span className="text-xs text-gray-400">{sub.blankCount}个空</span>
-                                  )}
+                                <div className="flex items-center justify-between gap-2 mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-medium text-gray-700">{SUB_NUMBERS[subIndex] || `${subIndex + 1}`}</span>
+                                    <span className="text-xs text-gray-400 px-1 py-0.5 bg-white rounded border">{sub.questionType}</span>
+                                    {isFillBlankType(sub.questionType) && (sub.blankCount || 1) > 1 && (
+                                      <span className="text-xs text-gray-400">{sub.blankCount}个空</span>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteSubQuestion(question.id, sub.id)}
+                                    className="p-0.5 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0"
+                                    title="删除该子题"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
                                 <div className="space-y-2">
                                   {answerProcessingForQuestionIds.has(question.id) ? (
@@ -6693,6 +7374,7 @@ export function UploadQuestionDialog({
                                 </div>
                               </div>
                             ))}
+                            </div>
                             </div>
                           </div>
                         )}
@@ -6908,7 +7590,7 @@ export function UploadQuestionDialog({
             <div className="px-5 py-4 max-h-[360px] overflow-y-auto">
               {questions.length === 0 ? (
                 <div className="text-center py-8 text-gray-400 text-sm">
-                  暂无已识别的题目，请先在第一步识别题目
+                  暂无已识别的题目，请先完成题目识别
                 </div>
               ) : (
                 <div className="space-y-1.5">
@@ -7103,45 +7785,33 @@ export function UploadQuestionDialog({
 
       {/* 帮助弹窗 */}
       {showHelpDialog && (
-        <div
-          className="fixed inset-y-0 left-0 bg-black/50 flex items-center justify-center z-50"
-          style={prdPanelOffsetStyle}
-        >
-          <div className="bg-white rounded-lg shadow-xl w-[400px] max-w-[90vw]">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="font-medium">操作说明</h3>
-              <button onClick={() => setShowHelpDialog(false)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        <div className="fixed inset-y-0 left-0 bg-black/50 flex items-center justify-center z-50" style={prdPanelOffsetStyle}>
+          <div className="bg-white rounded-xl shadow-xl w-[680px] max-w-[92vw] max-h-[90vh] overflow-auto">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h3 className="text-base font-semibold text-gray-800">操作说明</h3>
+              <button onClick={() => setShowHelpDialog(false)} className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"><X className="w-5 h-5" /></button>
             </div>
-            <div className="p-4 text-sm text-gray-600 space-y-3">
-              <div className="flex items-start gap-2">
-                <span className="bg-emerald-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs flex-shrink-0">1</span>
-                <p>在左侧资料预览区拖拽鼠标框选题目区域（支持多页）</p>
+            <div className="px-6 py-5 space-y-6">
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5"><span className="w-1 h-4 rounded-full bg-emerald-500 inline-block" /> 流程总览</h4>
+                <div className="flex items-center gap-2 mb-3">
+                  {[{ num: 1, label: '上传资料' },{ num: 2, label: '选择识别方式' },{ num: 3, label: '选择识别内容' },{ num: 4, label: '核对识别结果' },{ num: 5, label: '加入试卷' }].map(({ num, label }, i) => (<Fragment key={num}>{i > 0 && <ArrowRight className="w-4 h-4 text-gray-300 flex-shrink-0" />}<div className="flex-1 bg-gray-50 rounded-lg p-3 text-center border border-gray-100 min-w-0"><span className="inline-block w-6 h-6 rounded-full bg-emerald-500 text-white text-xs font-bold leading-6 mb-1.5">{num}</span><p className="text-xs font-medium text-gray-700 leading-tight">{label}</p></div></Fragment>))}
+                </div>
+                <p className="text-xs text-gray-400">按流程完成上传、识别方式选择、结果校对和手动关联，确认无误后加入试卷。</p>
               </div>
-              <div className="flex items-start gap-2">
-                <span className="bg-emerald-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs flex-shrink-0">2</span>
-                <p>点击左上角圆形按钮切换选中状态，或点击右上角X删除</p>
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5"><span className="w-1 h-4 rounded-full bg-emerald-500 inline-block" /> 步骤说明</h4>
+                <div className="space-y-2">
+                  {[{ num: 1, title: '上传资料', desc: '上传、删除或补充资料，单次最多识别 24 页' },{ num: 2, title: '选择识别方式', desc: '按资料内容选择：仅识别题目 / 题目+答案（同文件） / 题目+答案（不同文件）' },{ num: 3, title: '选择识别内容', desc: '在资料页选择或调整要识别的框，确认后点击「开始识别」。' },{ num: 4, title: '核对识别结果', desc: '右侧核对题干、答案和解析；左侧仍可继续框选新增内容并追加识别，题目+答案模式可手动关联答案。' },{ num: 5, title: '加入试卷', desc: '确认题目和答案无误后，点击右上角「加入试卷」进入试卷编辑页面' }].map(({ num, title, desc }) => (<div key={num} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100"><span className="w-6 h-6 rounded-full bg-emerald-500 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{num}</span><div className="min-w-0"><p className="text-sm font-medium text-gray-700">{title}</p><p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{desc}</p></div></div>))}
+                </div>
               </div>
-              <div className="flex items-start gap-2">
-                <span className="bg-emerald-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs flex-shrink-0">3</span>
-                <p>点击「批量移入」按钮，系统会自动识别题目、答案、解析</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="bg-emerald-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs flex-shrink-0">4</span>
-                <p>在右侧直接编辑答案和解析，点击左侧答案标记可定位到对应题目</p>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="bg-emerald-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs flex-shrink-0">5</span>
-                <p>点击「加入试卷」完成录入</p>
-              </div>
-              <div className="bg-blue-50 p-2 rounded mt-2">
-                <p className="text-xs text-blue-600">
-                  <strong>AI 识别特性：</strong>
-                  支持跨页答案识别、答案页分离识别、从解析中自动提取答案
-                </p>
+              <div className="flex items-start gap-2 p-3 bg-emerald-50 rounded-lg border border-emerald-100">
+                <Sparkles className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-emerald-700 leading-relaxed"><span className="font-medium">小贴士：</span>识别过程中可随时更换资料、修改识别方式或补充资料。</p>
               </div>
             </div>
-            <div className="p-4 border-t bg-gray-50 rounded-b-lg">
-              <button onClick={() => setShowHelpDialog(false)} className="w-full px-4 py-2 bg-emerald-500 text-white rounded hover:bg-emerald-600">我知道了</button>
+            <div className="px-6 py-4 border-t bg-gray-50 rounded-b-xl">
+              <button onClick={() => setShowHelpDialog(false)} className="w-full py-2.5 bg-emerald-500 text-white text-sm font-medium rounded-lg hover:bg-emerald-600 transition-colors">我知道了</button>
             </div>
           </div>
         </div>
@@ -7156,14 +7826,14 @@ export function UploadQuestionDialog({
           <div className="bg-white rounded-lg shadow-xl w-[360px] max-w-[90vw]">
             {/* 头部 - 复刻上传弹窗样式：浅绿色背景 + 圆形关闭按钮 */}
             <div className="flex items-center justify-between px-4 py-3 border-b bg-emerald-50 rounded-t-lg">
-              <h3 className="font-medium text-emerald-600">确认重新上传</h3>
+              <h3 className="font-medium text-emerald-600">确认更换资料吗？</h3>
               <button onClick={handleReuploadCancel} className="w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center text-white hover:bg-emerald-600">
                 <X className="w-4 h-4" />
               </button>
             </div>
             {/* 内容区 */}
             <div className="px-6 py-12">
-              <p className="text-sm text-gray-600 leading-relaxed">重新上传将清空当前资料、框选和识别方式，是否继续？</p>
+              <p className="text-sm text-gray-600 leading-relaxed">更换资料，将清空当前已有的识别结果。</p>
             </div>
             {/* 底部按钮 - 复刻上传弹窗样式：取消灰色边框 + 确定绿色填充 */}
             <div className="flex items-center justify-end gap-3 px-4 py-2 border-t">

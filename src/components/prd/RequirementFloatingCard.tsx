@@ -31,11 +31,14 @@ function SectionValue({ value }: { value: string | string[] }) {
 
   if (items.length > 1) {
     return (
-      <ul className="mt-1.5 list-disc space-y-1.5 pl-4 leading-5">
-        {items.map((item) => (
-          <li key={item}>{item}</li>
+      <ol className="mt-1.5 space-y-1.5 leading-5">
+        {items.map((item, index) => (
+          <li key={`${item}-${index}`} className="flex gap-1.5">
+            <span className="shrink-0 text-[11px] font-semibold text-emerald-700">{index + 1}、</span>
+            <span>{item}</span>
+          </li>
         ))}
-      </ul>
+      </ol>
     );
   }
 
@@ -134,8 +137,15 @@ export function RequirementFloatingCard({
         onPointerCancel={handleDragEnd}
       >
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold text-emerald-700">
-            {displayNumber ? `需求 ${displayNumber}` : requirement.id}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-emerald-700">
+              {displayNumber ? `需求 ${displayNumber} · ${requirement.id}` : requirement.id}
+            </span>
+            {requirement.changeDate && (
+              <span className="text-[10px] font-medium text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded">
+                【{requirement.changeDate}】
+              </span>
+            )}
           </div>
           <div className="mt-0.5 text-sm font-semibold text-gray-900">{requirement.title}</div>
         </div>

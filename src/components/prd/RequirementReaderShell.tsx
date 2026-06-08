@@ -25,6 +25,7 @@ interface RequirementReaderContextValue {
   highlightedAnchorId: string | null;
   selectionRevision: number;
   setSelectedRequirement: (requirementId: string | null, anchorId?: string | null) => void;
+  setActiveRequirementIds: (requirementIds: string[] | null) => void;
   registerActivationHandler: (key: string, handler: ActivationHandler) => () => void;
 }
 
@@ -64,7 +65,7 @@ function findAnchor(anchorId: string) {
 }
 
 async function waitForAnchor(anchorId: string) {
-  for (let index = 0; index < 20; index += 1) {
+  for (let index = 0; index < 40; index += 1) {
     const anchor = findAnchor(anchorId);
 
     if (anchor) {
@@ -93,6 +94,7 @@ export function RequirementReaderShell({ registries, children }: RequirementRead
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null);
   const [highlightedAnchorId, setHighlightedAnchorId] = useState<string | null>(null);
+  const [activeRequirementIds, setActiveRequirementIdsState] = useState<string[] | null>(null);
   const [selectionRevision, setSelectionRevision] = useState(0);
   const [viewportWidth, setViewportWidth] = useState(0);
   const activationHandlersRef = useRef(new Map<string, ActivationHandler>());
@@ -122,6 +124,10 @@ export function RequirementReaderShell({ registries, children }: RequirementRead
     }
   }, []);
 
+  const setActiveRequirementIds = useCallback((requirementIds: string[] | null) => {
+    setActiveRequirementIdsState(requirementIds);
+  }, []);
+
   const registerActivationHandler = useCallback((key: string, handler: ActivationHandler) => {
     activationHandlersRef.current.set(key, handler);
 
@@ -143,7 +149,7 @@ export function RequirementReaderShell({ registries, children }: RequirementRead
   }, []);
 
   const waitForActivationHandler = useCallback(async (key: string) => {
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 40; index += 1) {
       const handler = activationHandlersRef.current.get(key);
 
       if (handler) {
@@ -234,6 +240,7 @@ export function RequirementReaderShell({ registries, children }: RequirementRead
       highlightedAnchorId,
       selectionRevision,
       setSelectedRequirement,
+      setActiveRequirementIds,
       registerActivationHandler,
     }),
     [
@@ -241,9 +248,25 @@ export function RequirementReaderShell({ registries, children }: RequirementRead
       registerActivationHandler,
       selectedRequirementId,
       selectionRevision,
+      setActiveRequirementIds,
       setSelectedRequirement,
     ],
   );
+
+  const panelRegistries = useMemo(() => {
+    if (!activeRequirementIds || activeRequirementIds.length === 0) {
+      return registries;
+    }
+
+    const activeRequirementIdSet = new Set(activeRequirementIds);
+
+    return registries
+      .map((registry) => ({
+        ...registry,
+        requirements: registry.requirements.filter((requirement) => activeRequirementIdSet.has(requirement.id)),
+      }))
+      .filter((registry) => registry.requirements.length > 0);
+  }, [activeRequirementIds, registries]);
 
   return (
     <RequirementReaderContext.Provider value={contextValue}>
@@ -270,7 +293,7 @@ export function RequirementReaderShell({ registries, children }: RequirementRead
             <button
               type="button"
               aria-label="打开 PRD 需求说明"
-              className="fixed top-24 z-[55] flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-white text-emerald-700 shadow-lg hover:bg-emerald-50"
+              className="fixed top-24 z-[70] flex h-9 w-9 items-center justify-center rounded-full border border-emerald-200 bg-white text-emerald-700 shadow-lg hover:bg-emerald-50"
               style={{ right: 'var(--prd-floating-right)' }}
               onClick={() => setPanelOpen(true)}
             >
@@ -294,7 +317,8 @@ export function RequirementReaderShell({ registries, children }: RequirementRead
               <GripVertical className="h-4 w-4" />
             </div>
             <RequirementPanel
-              registries={registries}
+              registries={panelRegistries}
+              displayNumberRegistries={registries}
               selectedRequirementId={selectedRequirementId}
               onSelectRequirement={activateRequirement}
               onClose={() => setPanelOpen(false)}
