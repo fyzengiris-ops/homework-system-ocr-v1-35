@@ -267,11 +267,9 @@ function AiPanel({ onOpenUpload }: { onOpenUpload: () => void }) {
 function SourceCard({
   icon,
   title,
-  description,
 }: {
   icon: React.ReactNode;
   title: string;
-  description: string;
 }) {
   return (
     <button
@@ -283,9 +281,6 @@ function SourceCard({
       </div>
       <div className="mt-[30px] text-[32px] font-semibold leading-none text-[#202124]">
         {title}
-      </div>
-      <div className="mt-[18px] max-w-[330px] text-[22px] leading-[32px] text-[#6f7672]">
-        {description}
       </div>
     </button>
   );
@@ -311,12 +306,10 @@ function AddImageDialog({ onClose }: { onClose: () => void }) {
 
         <div className="absolute left-[64px] top-[154px] flex gap-[40px]">
           <SourceCard
-            description="从本机相册选择已拍好的图片"
             icon={<Images className="h-[42px] w-[42px] stroke-[1.9]" />}
             title="从相册选择"
           />
           <SourceCard
-            description="使用平板相机拍摄作业、试卷或讲义"
             icon={<Camera className="h-[42px] w-[42px] stroke-[1.9]" />}
             title="拍照上传"
           />
