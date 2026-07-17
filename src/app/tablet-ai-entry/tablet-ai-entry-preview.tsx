@@ -268,43 +268,24 @@ function SourceCard({
   icon,
   title,
   description,
-  primary = false,
 }: {
   icon: React.ReactNode;
   title: string;
   description: string;
-  primary?: boolean;
 }) {
   return (
     <button
-      className={`flex h-[302px] w-[428px] flex-col items-start justify-between rounded-[16px] px-[34px] py-[34px] text-left shadow-[0_10px_28px_rgba(20,44,35,0.08)] active:scale-[0.99] ${
-        primary
-          ? 'border border-[#8de0bf] bg-[#f4fcf8]'
-          : 'border border-[#ececec] bg-white'
-      }`}
+      className="flex h-[286px] w-[428px] flex-col items-center justify-center rounded-[16px] bg-[#f8f9f9] text-center shadow-[0_8px_24px_rgba(20,44,35,0.06)] active:scale-[0.99] active:bg-[#f2f7f5]"
       type="button"
     >
-      <div className="flex w-full items-start justify-between">
-        <div
-          className={`flex h-[76px] w-[76px] items-center justify-center rounded-[18px] ${
-            primary ? 'bg-[#58cf9a] text-white' : 'bg-[#f2f4f5] text-[#4f5b56]'
-          }`}
-        >
-          {icon}
-        </div>
-        {primary ? (
-          <span className="rounded-full bg-white px-[16px] py-[8px] text-[20px] font-medium leading-none text-[#39b77e] shadow-[0_2px_8px_rgba(39,161,107,0.12)]">
-            推荐
-          </span>
-        ) : null}
+      <div className="flex h-[78px] w-[78px] items-center justify-center rounded-[20px] bg-white text-[#49bf89] shadow-[0_6px_18px_rgba(20,44,35,0.08)]">
+        {icon}
       </div>
-      <div>
-        <div className="text-[32px] font-semibold leading-none text-[#202124]">
-          {title}
-        </div>
-        <div className="mt-[18px] max-w-[340px] text-[22px] leading-[34px] text-[#6f7672]">
-          {description}
-        </div>
+      <div className="mt-[30px] text-[32px] font-semibold leading-none text-[#202124]">
+        {title}
+      </div>
+      <div className="mt-[18px] max-w-[330px] text-[22px] leading-[32px] text-[#6f7672]">
+        {description}
       </div>
     </button>
   );
@@ -328,31 +309,21 @@ function AddImageDialog({ onClose }: { onClose: () => void }) {
           </button>
         </header>
 
-        <div className="absolute left-[64px] top-[126px]">
-          <h2 className="text-[38px] font-semibold leading-none text-[#202124]">
-            添加需要识别的图片
-          </h2>
-          <p className="mt-[20px] text-[24px] leading-none text-[#6f7672]">
-            可以拍摄作业资料，也可以从相册选择已拍好的图片
-          </p>
-        </div>
-
-        <div className="absolute left-[64px] top-[230px] flex gap-[40px]">
-          <SourceCard
-            description="使用平板相机拍摄作业、试卷或讲义"
-            icon={<Camera className="h-[42px] w-[42px] stroke-[1.9]" />}
-            primary
-            title="拍照上传"
-          />
+        <div className="absolute left-[64px] top-[154px] flex gap-[40px]">
           <SourceCard
             description="从本机相册选择已拍好的图片"
             icon={<Images className="h-[42px] w-[42px] stroke-[1.9]" />}
             title="从相册选择"
           />
+          <SourceCard
+            description="使用平板相机拍摄作业、试卷或讲义"
+            icon={<Camera className="h-[42px] w-[42px] stroke-[1.9]" />}
+            title="拍照上传"
+          />
         </div>
 
-        <div className="absolute bottom-[54px] left-[64px] flex h-[72px] w-[944px] items-center rounded-[14px] bg-[#f7f8f8] px-[26px] text-[22px] leading-none text-[#737b77]">
-          最多可添加12张图片。添加完成后，将继续确认学科并进入切题识别。
+        <div className="absolute bottom-[80px] left-0 w-full text-center text-[22px] leading-none text-[#8a8f8c]">
+          最多可添加12张图片
         </div>
       </section>
     </div>
