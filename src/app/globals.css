@@ -136,3 +136,7 @@
 body {
   @apply font-sans;
 }
+
+nextjs-portal {
+  display: none !important;
+}
