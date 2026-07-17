@@ -246,13 +246,7 @@ function SelectedImageCard({ image }: { image: SelectedImage }) {
   );
 }
 
-function SelectedImagesPanel({
-  images,
-  onOpenUpload,
-}: {
-  images: SelectedImage[];
-  onOpenUpload: () => void;
-}) {
+function SelectedImagesPanel({ images }: { images: SelectedImage[] }) {
   return (
     <>
       <div className="absolute right-[27px] top-[285px] text-[24px] leading-none text-[#202124]">
@@ -288,14 +282,6 @@ function SelectedImagesPanel({
           </button>
         ))}
       </div>
-      <button
-        className="absolute right-[35px] top-[934px] flex h-[46px] items-center gap-[8px] rounded-[8px] border border-[#dcdcdc] bg-white px-[16px] text-[21px] leading-none text-[#666] active:bg-[#f6f6f6]"
-        onClick={onOpenUpload}
-        type="button"
-      >
-        <Plus className="h-[22px] w-[22px]" />
-        继续添加
-      </button>
     </>
   );
 }
@@ -333,7 +319,7 @@ function AiPanel({
       </div>
 
       {hasSelectedImages ? (
-        <SelectedImagesPanel images={selectedImages} onOpenUpload={onOpenUpload} />
+        <SelectedImagesPanel images={selectedImages} />
       ) : (
         <>
           <QuickButton top={279}>帮我布置试卷作业</QuickButton>
