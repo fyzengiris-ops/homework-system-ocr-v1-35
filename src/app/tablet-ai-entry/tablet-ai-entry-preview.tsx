@@ -279,7 +279,7 @@ function SourceCard({
       <div className="flex h-[78px] w-[78px] items-center justify-center rounded-[20px] bg-white text-[#49bf89] shadow-[0_6px_18px_rgba(20,44,35,0.08)]">
         {icon}
       </div>
-      <div className="mt-[30px] text-[32px] font-semibold leading-none text-[#202124]">
+      <div className="mt-[30px] text-[30px] font-medium leading-none text-[#202124]">
         {title}
       </div>
     </button>
@@ -290,8 +290,8 @@ function AddImageDialog({ onClose }: { onClose: () => void }) {
   return (
     <div className="absolute inset-0 z-20 bg-black/55">
       <section className="absolute left-[424px] top-[214px] h-[706px] w-[1072px] rounded-[20px] bg-white shadow-[0_20px_52px_rgba(0,0,0,0.24)]">
-        <header className="absolute left-0 top-0 h-[94px] w-full">
-          <div className="absolute left-[48px] top-[32px] text-[34px] font-semibold leading-none text-[#202124]">
+        <header className="absolute left-0 top-0 h-[96px] w-full border-b border-[#eeeeee]">
+          <div className="absolute left-[48px] top-[31px] text-[34px] font-normal leading-none text-[#202124]">
             识别作业资料
           </div>
           <button
