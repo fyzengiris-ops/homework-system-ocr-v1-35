@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   ChevronLeft,
@@ -19,6 +19,11 @@ import {
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1200;
+
+type SelectedImage = {
+  name: string;
+  url: string;
+};
 
 const assignments = [
   {
@@ -41,6 +46,23 @@ const assignments = [
     name: '阶段同步练习',
     tags: ['课后'],
   },
+];
+
+const subjects = [
+  '小学语文',
+  '小学数学',
+  '小学英语',
+  '初中语文',
+  '初中英语',
+  '高中语文',
+  '高中数学',
+  '高中英语',
+  '高中物理',
+  '高中化学',
+  '高中生物',
+  '高中政治',
+  '高中历史',
+  '高中地理',
 ];
 
 function useCanvasScale() {
@@ -204,7 +226,89 @@ function HomeworkPanel() {
   );
 }
 
-function AiPanel({ onOpenUpload }: { onOpenUpload: () => void }) {
+function SelectedImageCard({ image }: { image: SelectedImage }) {
+  return (
+    <div className="flex h-[86px] w-[330px] items-center gap-[14px] rounded-[10px] border border-[#e8e8e8] bg-white px-[14px]">
+      <img
+        alt=""
+        className="h-[58px] w-[58px] shrink-0 rounded-[6px] object-cover"
+        src={image.url}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[21px] leading-none text-[#303030]">
+          {image.name}
+        </div>
+        <div className="mt-[10px] rounded-[4px] bg-[#ff5f60] px-[7px] py-[4px] text-[15px] font-medium leading-none text-white w-fit">
+          图片
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SelectedImagesPanel({
+  images,
+  onOpenUpload,
+}: {
+  images: SelectedImage[];
+  onOpenUpload: () => void;
+}) {
+  return (
+    <>
+      <div className="absolute right-[27px] top-[285px] text-[24px] leading-none text-[#202124]">
+        帮我识别以下资料
+      </div>
+      <div className="absolute right-[31px] top-[353px] w-[348px] rounded-[10px] bg-[#f7f8fb] p-[14px]">
+        <div className="grid gap-[14px]">
+          {images.slice(0, 3).map((image) => (
+            <SelectedImageCard key={image.url} image={image} />
+          ))}
+        </div>
+        {images.length > 3 ? (
+          <div className="mt-[12px] text-right text-[20px] leading-none text-[#8a8a8a]">
+            另有 {images.length - 3} 张图片
+          </div>
+        ) : null}
+      </div>
+
+      <div className="absolute left-[22px] top-[634px]">
+        <RobotMark />
+      </div>
+      <div className="absolute left-[106px] top-[646px] text-[24px] leading-none text-[#303030]">
+        请确认这次识别资料的学科
+      </div>
+      <div className="absolute left-[88px] top-[706px] grid w-[780px] grid-cols-4 gap-[16px]">
+        {subjects.map((subject) => (
+          <button
+            key={subject}
+            className="h-[58px] rounded-[8px] border border-[#dedede] bg-white text-[22px] leading-none text-[#333] active:bg-[#f6f6f6]"
+            type="button"
+          >
+            {subject}
+          </button>
+        ))}
+      </div>
+      <button
+        className="absolute right-[35px] top-[934px] flex h-[46px] items-center gap-[8px] rounded-[8px] border border-[#dcdcdc] bg-white px-[16px] text-[21px] leading-none text-[#666] active:bg-[#f6f6f6]"
+        onClick={onOpenUpload}
+        type="button"
+      >
+        <Plus className="h-[22px] w-[22px]" />
+        继续添加
+      </button>
+    </>
+  );
+}
+
+function AiPanel({
+  selectedImages,
+  onOpenUpload,
+}: {
+  selectedImages: SelectedImage[];
+  onOpenUpload: () => void;
+}) {
+  const hasSelectedImages = selectedImages.length > 0;
+
   return (
     <aside className="absolute left-[966px] top-0 h-[1200px] w-[954px] rounded-l-[12px] bg-white shadow-[-12px_0_24px_rgba(0,0,0,0.13)]">
       <header className="absolute left-0 top-0 h-[142px] w-full">
@@ -228,11 +332,17 @@ function AiPanel({ onOpenUpload }: { onOpenUpload: () => void }) {
         </div>
       </div>
 
-      <QuickButton top={279}>帮我布置试卷作业</QuickButton>
-      <QuickButton top={357} onClick={onOpenUpload}>
-        帮我识别作业资料
-      </QuickButton>
-      <QuickButton top={430}>帮我布置听力作业</QuickButton>
+      {hasSelectedImages ? (
+        <SelectedImagesPanel images={selectedImages} onOpenUpload={onOpenUpload} />
+      ) : (
+        <>
+          <QuickButton top={279}>帮我布置试卷作业</QuickButton>
+          <QuickButton top={357} onClick={onOpenUpload}>
+            帮我识别作业资料
+          </QuickButton>
+          <QuickButton top={430}>帮我布置听力作业</QuickButton>
+        </>
+      )}
 
       <div className="absolute bottom-[24px] left-[26px] h-[155px] w-[902px] rounded-[16px] border border-[#d3d3d3] bg-[#f4f4f4] text-[#b9b9b9] shadow-[0_0_0_1px_rgba(0,0,0,0.02)]">
         <div className="absolute left-[20px] top-[22px] flex items-center gap-[18px]">
@@ -267,13 +377,16 @@ function AiPanel({ onOpenUpload }: { onOpenUpload: () => void }) {
 function SourceCard({
   icon,
   title,
+  onClick,
 }: {
   icon: React.ReactNode;
   title: string;
+  onClick?: () => void;
 }) {
   return (
     <button
       className="flex h-[286px] w-[428px] flex-col items-center justify-center rounded-[16px] bg-[#f8f9f9] text-center shadow-[0_8px_24px_rgba(20,44,35,0.06)] active:scale-[0.99] active:bg-[#f2f7f5]"
+      onClick={onClick}
       type="button"
     >
       <div className="flex h-[78px] w-[78px] items-center justify-center rounded-[20px] bg-white text-[#49bf89] shadow-[0_6px_18px_rgba(20,44,35,0.08)]">
@@ -286,9 +399,31 @@ function SourceCard({
   );
 }
 
-function AddImageDialog({ onClose }: { onClose: () => void }) {
+function AddImageDialog({
+  onAlbumSelected,
+  onClose,
+}: {
+  onAlbumSelected: (files: File[]) => void;
+  onClose: () => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   return (
     <div className="absolute inset-0 z-20 bg-black/55">
+      <input
+        ref={fileInputRef}
+        accept="image/*"
+        className="hidden"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          if (files.length > 0) {
+            onAlbumSelected(files.slice(0, 24));
+          }
+          event.target.value = '';
+        }}
+        type="file"
+      />
       <section className="absolute left-[424px] top-[214px] h-[706px] w-[1072px] rounded-[20px] bg-white shadow-[0_20px_52px_rgba(0,0,0,0.24)]">
         <header className="absolute left-0 top-0 h-[96px] w-full border-b border-[#eeeeee]">
           <div className="absolute left-[48px] top-[33px] text-[30px] font-normal leading-none text-[#202124]">
@@ -307,6 +442,7 @@ function AddImageDialog({ onClose }: { onClose: () => void }) {
         <div className="absolute left-[64px] top-[154px] flex gap-[40px]">
           <SourceCard
             icon={<Images className="h-[42px] w-[42px] stroke-[1.9]" />}
+            onClick={() => fileInputRef.current?.click()}
             title="从相册选择"
           />
           <SourceCard
@@ -326,6 +462,24 @@ function AddImageDialog({ onClose }: { onClose: () => void }) {
 export function TabletAiEntryPreview() {
   const scale = useCanvasScale();
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
+
+  useEffect(() => {
+    return () => {
+      selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
+    };
+  }, [selectedImages]);
+
+  const handleAlbumSelected = (files: File[]) => {
+    selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
+    setSelectedImages(
+      files.map((file) => ({
+        name: file.name,
+        url: URL.createObjectURL(file),
+      })),
+    );
+    setIsUploadDialogOpen(false);
+  };
 
   return (
     <main className="flex min-h-screen items-center justify-center overflow-hidden bg-[#dfe2e6]">
@@ -344,9 +498,15 @@ export function TabletAiEntryPreview() {
           }}
         >
           <HomeworkPanel />
-          <AiPanel onOpenUpload={() => setIsUploadDialogOpen(true)} />
+          <AiPanel
+            onOpenUpload={() => setIsUploadDialogOpen(true)}
+            selectedImages={selectedImages}
+          />
           {isUploadDialogOpen ? (
-            <AddImageDialog onClose={() => setIsUploadDialogOpen(false)} />
+            <AddImageDialog
+              onAlbumSelected={handleAlbumSelected}
+              onClose={() => setIsUploadDialogOpen(false)}
+            />
           ) : null}
         </div>
       </div>
