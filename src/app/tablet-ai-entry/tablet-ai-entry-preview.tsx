@@ -316,7 +316,7 @@ function AddImageDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="absolute bottom-[80px] left-0 w-full text-center text-[22px] leading-none text-[#8a8f8c]">
-          最多可添加12张图片
+          最多可添加24张图片
         </div>
       </section>
     </div>
