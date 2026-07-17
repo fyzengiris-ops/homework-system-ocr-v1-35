@@ -226,7 +226,89 @@ function HomeworkPanel() {
   );
 }
 
-function AiPanel({ onOpenUpload }: { onOpenUpload: () => void }) {
+function SelectedImageCard({ image }: { image: SelectedImage }) {
+  return (
+    <div className="flex h-[86px] w-[330px] items-center gap-[14px] rounded-[10px] border border-[#e8e8e8] bg-white px-[14px]">
+      <img
+        alt=""
+        className="h-[58px] w-[58px] shrink-0 rounded-[6px] object-cover"
+        src={image.url}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[21px] leading-none text-[#303030]">
+          {image.name}
+        </div>
+        <div className="mt-[10px] rounded-[4px] bg-[#ff5f60] px-[7px] py-[4px] text-[15px] font-medium leading-none text-white w-fit">
+          图片
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SelectedImagesPanel({
+  images,
+  onOpenUpload,
+}: {
+  images: SelectedImage[];
+  onOpenUpload: () => void;
+}) {
+  return (
+    <>
+      <div className="absolute right-[27px] top-[285px] text-[24px] leading-none text-[#202124]">
+        帮我识别以下资料
+      </div>
+      <div className="absolute right-[31px] top-[353px] w-[348px] rounded-[10px] bg-[#f7f8fb] p-[14px]">
+        <div className="grid gap-[14px]">
+          {images.slice(0, 3).map((image) => (
+            <SelectedImageCard key={image.url} image={image} />
+          ))}
+        </div>
+        {images.length > 3 ? (
+          <div className="mt-[12px] text-right text-[20px] leading-none text-[#8a8a8a]">
+            另有 {images.length - 3} 张图片
+          </div>
+        ) : null}
+      </div>
+
+      <div className="absolute left-[22px] top-[634px]">
+        <RobotMark />
+      </div>
+      <div className="absolute left-[106px] top-[646px] text-[24px] leading-none text-[#303030]">
+        请确认这次识别资料的学科
+      </div>
+      <div className="absolute left-[88px] top-[706px] grid w-[780px] grid-cols-4 gap-[16px]">
+        {subjects.map((subject) => (
+          <button
+            key={subject}
+            className="h-[58px] rounded-[8px] border border-[#dedede] bg-white text-[22px] leading-none text-[#333] active:bg-[#f6f6f6]"
+            type="button"
+          >
+            {subject}
+          </button>
+        ))}
+      </div>
+      <button
+        className="absolute right-[35px] top-[934px] flex h-[46px] items-center gap-[8px] rounded-[8px] border border-[#dcdcdc] bg-white px-[16px] text-[21px] leading-none text-[#666] active:bg-[#f6f6f6]"
+        onClick={onOpenUpload}
+        type="button"
+      >
+        <Plus className="h-[22px] w-[22px]" />
+        继续添加
+      </button>
+    </>
+  );
+}
+
+function AiPanel({
+  selectedImages,
+  onOpenUpload,
+}: {
+  selectedImages: SelectedImage[];
+  onOpenUpload: () => void;
+}) {
+  const hasSelectedImages = selectedImages.length > 0;
+
   return (
     <aside className="absolute left-[966px] top-0 h-[1200px] w-[954px] rounded-l-[12px] bg-white shadow-[-12px_0_24px_rgba(0,0,0,0.13)]">
       <header className="absolute left-0 top-0 h-[142px] w-full">
@@ -250,11 +332,17 @@ function AiPanel({ onOpenUpload }: { onOpenUpload: () => void }) {
         </div>
       </div>
 
-      <QuickButton top={279}>帮我布置试卷作业</QuickButton>
-      <QuickButton top={357} onClick={onOpenUpload}>
-        帮我识别作业资料
-      </QuickButton>
-      <QuickButton top={430}>帮我布置听力作业</QuickButton>
+      {hasSelectedImages ? (
+        <SelectedImagesPanel images={selectedImages} onOpenUpload={onOpenUpload} />
+      ) : (
+        <>
+          <QuickButton top={279}>帮我布置试卷作业</QuickButton>
+          <QuickButton top={357} onClick={onOpenUpload}>
+            帮我识别作业资料
+          </QuickButton>
+          <QuickButton top={430}>帮我布置听力作业</QuickButton>
+        </>
+      )}
 
       <div className="absolute bottom-[24px] left-[26px] h-[155px] w-[902px] rounded-[16px] border border-[#d3d3d3] bg-[#f4f4f4] text-[#b9b9b9] shadow-[0_0_0_1px_rgba(0,0,0,0.02)]">
         <div className="absolute left-[20px] top-[22px] flex items-center gap-[18px]">
@@ -286,92 +374,39 @@ function AiPanel({ onOpenUpload }: { onOpenUpload: () => void }) {
   );
 }
 
-function AddSourceCard({
+function SourceCard({
   icon,
-  compact = false,
   title,
   onClick,
 }: {
   icon: React.ReactNode;
-  compact?: boolean;
   title: string;
   onClick?: () => void;
 }) {
   return (
     <button
-      className={`flex flex-col items-center justify-center rounded-[14px] bg-[#f8f9f9] text-center shadow-[0_8px_24px_rgba(20,44,35,0.05)] active:scale-[0.99] active:bg-[#f2f7f5] ${
-        compact ? 'h-[150px] w-[230px]' : 'h-[286px] w-[428px]'
-      }`}
+      className="flex h-[286px] w-[428px] flex-col items-center justify-center rounded-[16px] bg-[#f8f9f9] text-center shadow-[0_8px_24px_rgba(20,44,35,0.06)] active:scale-[0.99] active:bg-[#f2f7f5]"
       onClick={onClick}
       type="button"
     >
-      <div
-        className={`flex items-center justify-center rounded-[18px] bg-white text-[#49bf89] shadow-[0_6px_18px_rgba(20,44,35,0.08)] ${
-          compact ? 'h-[58px] w-[58px]' : 'h-[78px] w-[78px]'
-        }`}
-      >
+      <div className="flex h-[78px] w-[78px] items-center justify-center rounded-[20px] bg-white text-[#49bf89] shadow-[0_6px_18px_rgba(20,44,35,0.08)]">
         {icon}
       </div>
-      <div
-        className={`font-medium leading-none text-[#202124] ${
-          compact ? 'mt-[18px] text-[22px]' : 'mt-[30px] text-[30px]'
-        }`}
-      >
+      <div className="mt-[30px] text-[30px] font-medium leading-none text-[#202124]">
         {title}
       </div>
     </button>
   );
 }
 
-function StepNav() {
-  const steps = ['添加资料', '选择识别方式', '选择识别内容', '检查结果'];
-
-  return (
-    <div className="flex items-center gap-[22px]">
-      {steps.map((step, index) => (
-        <div key={step} className="flex items-center gap-[22px]">
-          <div
-            className={`text-[20px] leading-none ${
-              index === 0 ? 'font-medium text-[#24b77c]' : 'text-[#9a9a9a]'
-            }`}
-          >
-            {step}
-          </div>
-          {index < steps.length - 1 ? (
-            <div className="h-[1px] w-[38px] bg-[#e5e5e5]" />
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ImageTile({ image, index }: { image: SelectedImage; index: number }) {
-  return (
-    <div className="relative h-[126px] overflow-hidden rounded-[10px] bg-[#f4f4f4]">
-      <img alt="" className="h-full w-full object-cover" src={image.url} />
-      <div className="absolute left-[8px] top-[8px] rounded-full bg-black/48 px-[9px] py-[4px] text-[15px] leading-none text-white">
-        {index + 1}
-      </div>
-    </div>
-  );
-}
-
-function AddMaterialStepDialog({
+function AddImageDialog({
   onAlbumSelected,
   onClose,
-  selectedImages,
-  selectedSubject,
-  onSubjectChange,
 }: {
   onAlbumSelected: (files: File[]) => void;
   onClose: () => void;
-  selectedImages: SelectedImage[];
-  selectedSubject: string;
-  onSubjectChange: (subject: string) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const canContinue = selectedImages.length > 0 && selectedSubject.length > 0;
 
   return (
     <div className="absolute inset-0 z-20 bg-black/55">
@@ -389,7 +424,7 @@ function AddMaterialStepDialog({
         }}
         type="file"
       />
-      <section className="absolute left-[330px] top-[154px] h-[884px] w-[1260px] rounded-[18px] bg-white shadow-[0_20px_52px_rgba(0,0,0,0.24)]">
+      <section className="absolute left-[424px] top-[214px] h-[706px] w-[1072px] rounded-[20px] bg-white shadow-[0_20px_52px_rgba(0,0,0,0.24)]">
         <header className="absolute left-0 top-0 h-[96px] w-full border-b border-[#eeeeee]">
           <div className="absolute left-[48px] top-[33px] text-[30px] font-normal leading-none text-[#202124]">
             识别作业资料
@@ -404,112 +439,21 @@ function AddMaterialStepDialog({
           </button>
         </header>
 
-        <div className="absolute left-[48px] top-[123px]">
-          <StepNav />
+        <div className="absolute left-[64px] top-[154px] flex gap-[40px]">
+          <SourceCard
+            icon={<Images className="h-[42px] w-[42px] stroke-[1.9]" />}
+            onClick={() => fileInputRef.current?.click()}
+            title="从相册选择"
+          />
+          <SourceCard
+            icon={<Camera className="h-[42px] w-[42px] stroke-[1.9]" />}
+            title="拍照上传"
+          />
         </div>
 
-        <div className="absolute left-[48px] top-[180px] h-[574px] w-[700px]">
-          <div className="flex items-center justify-between">
-            <div className="text-[26px] font-medium leading-none text-[#202124]">
-              添加资料
-            </div>
-            <div className="text-[20px] leading-none text-[#8a8f8c]">
-              最多可添加24张图片
-            </div>
-          </div>
-
-          <div className="mt-[22px] flex gap-[22px]">
-            <AddSourceCard
-              compact
-              icon={<Images className="h-[32px] w-[32px] stroke-[1.9]" />}
-              onClick={() => fileInputRef.current?.click()}
-              title="从相册选择"
-            />
-            <AddSourceCard
-              compact
-              icon={<Camera className="h-[32px] w-[32px] stroke-[1.9]" />}
-              title="拍照上传"
-            />
-          </div>
-
-          <div className="mt-[34px] flex items-center justify-between">
-            <div className="text-[24px] font-medium leading-none text-[#202124]">
-              已添加图片
-            </div>
-            {selectedImages.length > 0 ? (
-              <button
-                className="text-[20px] leading-none text-[#42bf86] active:text-[#219b66]"
-                onClick={() => fileInputRef.current?.click()}
-                type="button"
-              >
-                继续添加
-              </button>
-            ) : null}
-          </div>
-
-          {selectedImages.length > 0 ? (
-            <div className="mt-[18px] grid max-h-[264px] grid-cols-4 gap-[14px] overflow-hidden">
-              {selectedImages.slice(0, 8).map((image, index) => (
-                <ImageTile key={image.url} image={image} index={index} />
-              ))}
-            </div>
-          ) : (
-            <div className="mt-[18px] flex h-[264px] items-center justify-center rounded-[12px] bg-[#f7f8f8] text-[22px] leading-none text-[#a0a5a2]">
-              请选择或拍摄需要识别的图片
-            </div>
-          )}
-
-          {selectedImages.length > 8 ? (
-            <div className="mt-[12px] text-right text-[19px] leading-none text-[#8a8f8c]">
-              另有 {selectedImages.length - 8} 张图片
-            </div>
-          ) : null}
+        <div className="absolute bottom-[80px] left-0 w-full text-center text-[22px] leading-none text-[#8a8f8c]">
+          最多可添加24张图片
         </div>
-
-        <div className="absolute left-[804px] top-[180px] h-[574px] w-[408px]">
-          <div className="text-[26px] font-medium leading-none text-[#202124]">
-            选择学科
-          </div>
-          <div className="mt-[24px] grid grid-cols-2 gap-[14px]">
-            {subjects.map((subject) => {
-              const isSelected = selectedSubject === subject;
-
-              return (
-                <button
-                  key={subject}
-                  className={`h-[58px] rounded-[8px] border text-[21px] leading-none ${
-                    isSelected
-                      ? 'border-[#58cf9a] bg-[#eefaf4] text-[#23a872]'
-                      : 'border-[#e1e1e1] bg-white text-[#333]'
-                  }`}
-                  onClick={() => onSubjectChange(subject)}
-                  type="button"
-                >
-                  {subject}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <footer className="absolute bottom-0 left-0 h-[102px] w-full border-t border-[#eeeeee]">
-          <button
-            className="absolute bottom-[26px] right-[196px] h-[50px] w-[112px] rounded-[6px] border border-[#d7d7d7] bg-white text-[22px] leading-none text-[#555] active:bg-[#f6f6f6]"
-            onClick={onClose}
-            type="button"
-          >
-            取消
-          </button>
-          <button
-            className={`absolute bottom-[26px] right-[48px] h-[50px] w-[124px] rounded-[6px] text-[22px] leading-none text-white ${
-              canContinue ? 'bg-[#58cf9a] active:bg-[#45bf89]' : 'bg-[#c7c7c7]'
-            }`}
-            disabled={!canContinue}
-            type="button"
-          >
-            下一步
-          </button>
-        </footer>
       </section>
     </div>
   );
@@ -519,26 +463,22 @@ export function TabletAiEntryPreview() {
   const scale = useCanvasScale();
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
-  const [selectedSubject, setSelectedSubject] = useState('');
-  const imageUrlsRef = useRef<string[]>([]);
 
   useEffect(() => {
     return () => {
-      imageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
     };
-  }, []);
+  }, [selectedImages]);
 
   const handleAlbumSelected = (files: File[]) => {
-    setSelectedImages((currentImages) => {
-      const remainingCount = Math.max(24 - currentImages.length, 0);
-      const newImages = files.slice(0, remainingCount).map((file) => ({
+    selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
+    setSelectedImages(
+      files.map((file) => ({
         name: file.name,
         url: URL.createObjectURL(file),
-      }));
-
-      imageUrlsRef.current.push(...newImages.map((image) => image.url));
-      return [...currentImages, ...newImages];
-    });
+      })),
+    );
+    setIsUploadDialogOpen(false);
   };
 
   return (
@@ -558,14 +498,14 @@ export function TabletAiEntryPreview() {
           }}
         >
           <HomeworkPanel />
-          <AiPanel onOpenUpload={() => setIsUploadDialogOpen(true)} />
+          <AiPanel
+            onOpenUpload={() => setIsUploadDialogOpen(true)}
+            selectedImages={selectedImages}
+          />
           {isUploadDialogOpen ? (
-            <AddMaterialStepDialog
+            <AddImageDialog
               onAlbumSelected={handleAlbumSelected}
               onClose={() => setIsUploadDialogOpen(false)}
-              onSubjectChange={setSelectedSubject}
-              selectedImages={selectedImages}
-              selectedSubject={selectedSubject}
             />
           ) : null}
         </div>
