@@ -24,9 +24,11 @@ const CANVAS_HEIGHT = 1200;
 type SelectedImage = {
   name: string;
   url: string;
+  role?: ImageRole;
 };
 
 type RecognitionMode = 'questions_only' | 'same_image_answer' | 'separate_answer';
+type ImageRole = 'question' | 'answer';
 
 const assignments = [
   {
@@ -230,6 +232,9 @@ function HomeworkPanel() {
 }
 
 function SelectedImageCard({ image }: { image: SelectedImage }) {
+  const roleLabel = image.role === 'question' ? '题目' : image.role === 'answer' ? '答案' : '图片';
+  const roleClass = image.role === 'answer' ? 'bg-[#5d82f3]' : image.role === 'question' ? 'bg-[#10b981]' : 'bg-[#ff5f60]';
+
   return (
     <div className="flex h-[86px] w-[330px] items-center gap-[14px] rounded-[10px] border border-[#e8e8e8] bg-white px-[14px]">
       <img
@@ -241,8 +246,8 @@ function SelectedImageCard({ image }: { image: SelectedImage }) {
         <div className="truncate text-[21px] leading-none text-[#303030]">
           {image.name}
         </div>
-        <div className="mt-[10px] rounded-[4px] bg-[#ff5f60] px-[7px] py-[4px] text-[15px] font-medium leading-none text-white w-fit">
-          图片
+        <div className={`mt-[10px] rounded-[4px] px-[7px] py-[4px] text-[15px] font-medium leading-none text-white w-fit ${roleClass}`}>
+          {roleLabel}
         </div>
       </div>
     </div>
@@ -398,13 +403,13 @@ const recognitionModes: {
   {
     id: 'same_image_answer',
     title: '题目+答案',
-    badge: '同文件',
+    badge: '同图片',
     description: '适用于题目与答案解析紧挨着出现的资料',
   },
   {
     id: 'separate_answer',
     title: '题目+答案',
-    badge: '不同文件',
+    badge: '不同图片',
     description: '适用于题目资料与答案解析资料分开拍摄的场景',
   },
 ];
@@ -666,21 +671,23 @@ function ModeDiagram({ mode }: { mode: RecognitionMode }) {
 
 function RecognitionModeDialog({
   onClose,
-  onModeChange,
-  selectedMode,
-  selectedSubject,
+  onModeSelect,
 }: {
   onClose: () => void;
-  onModeChange: (mode: RecognitionMode) => void;
-  selectedMode: RecognitionMode | '';
-  selectedSubject: string;
+  onModeSelect: (mode: RecognitionMode) => void;
 }) {
   return (
     <div className="absolute inset-0 z-20 bg-[#f0f4f7]">
       <header className="absolute left-0 top-0 h-[96px] w-full border-b border-[#e8e8e8] bg-white">
-        <div className="absolute left-[48px] top-[33px] text-[30px] font-normal leading-none text-[#202124]">
-          识别作业资料
-        </div>
+        <button
+          aria-label="返回"
+          className="absolute left-[34px] top-[26px] flex h-[48px] items-center gap-[8px] rounded-[8px] pr-[16px] text-[#202124] active:bg-[#f4f4f4]"
+          onClick={onClose}
+          type="button"
+        >
+          <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
+          <span className="text-[30px] font-normal leading-none">识别作业资料</span>
+        </button>
       </header>
 
       <main className="absolute left-0 top-[96px] h-[1002px] w-full">
@@ -691,26 +698,16 @@ function RecognitionModeDialog({
           <p className="mt-[18px] text-[22px] leading-none text-[#6b7280]">
             建议根据您的资料内容，选择合适的处理流程
           </p>
-          <div className="mx-auto mt-[18px] w-fit rounded-full bg-[#eaf7f1] px-[18px] py-[8px] text-[20px] leading-none text-[#31ad76]">
-            {selectedSubject}
-          </div>
         </div>
 
         <div className="absolute left-[44px] top-[190px] grid w-[1832px] grid-cols-3 gap-[24px]">
           {recognitionModes.map((mode) => {
-            const isSelected = selectedMode === mode.id;
             const iconColor =
               mode.id === 'questions_only'
                 ? 'bg-blue-50 text-blue-600'
                 : mode.id === 'same_image_answer'
                   ? 'bg-purple-50 text-purple-600'
                   : 'bg-amber-50 text-amber-600';
-            const selectedClass =
-              mode.id === 'questions_only'
-                ? 'border-blue-400 bg-blue-50/40 shadow-blue-100/70'
-                : mode.id === 'same_image_answer'
-                  ? 'border-purple-400 bg-purple-50/40 shadow-purple-100/70'
-                  : 'border-amber-400 bg-amber-50/40 shadow-amber-100/70';
             const badgeColor =
               mode.id === 'same_image_answer'
                 ? 'bg-[#eaf5ff] text-[#2698ff]'
@@ -727,10 +724,8 @@ function RecognitionModeDialog({
             return (
               <button
                 key={mode.id}
-                className={`group flex h-[600px] cursor-pointer flex-col rounded-[16px] border-2 bg-white px-[34px] pb-[32px] pt-[36px] text-left shadow-[0_12px_34px_rgba(31,44,58,0.10)] transition-all active:scale-[0.995] ${
-                  isSelected ? selectedClass : 'border-white'
-                }`}
-                onClick={() => onModeChange(mode.id)}
+                className="group flex h-[600px] cursor-pointer flex-col rounded-[16px] border-2 border-white bg-white px-[34px] pb-[32px] pt-[36px] text-left shadow-[0_12px_34px_rgba(31,44,58,0.10)] transition-all active:scale-[0.995] active:border-[#58cf9a] active:bg-[#f3fbf7]"
+                onClick={() => onModeSelect(mode.id)}
                 type="button"
               >
                 <div className="mb-[30px] flex items-start gap-[18px]">
@@ -745,11 +740,6 @@ function RecognitionModeDialog({
                       {mode.badge ? (
                         <span className={`rounded-full px-[12px] py-[6px] text-[18px] font-medium leading-none ${badgeColor}`}>
                           {mode.badge}
-                        </span>
-                      ) : null}
-                      {isSelected ? (
-                        <span className="rounded-full bg-emerald-50 px-[10px] py-[6px] text-[16px] font-medium leading-none text-emerald-600">
-                          已选
                         </span>
                       ) : null}
                     </div>
@@ -767,25 +757,6 @@ function RecognitionModeDialog({
           })}
         </div>
       </main>
-
-      <footer className="absolute bottom-0 left-0 h-[102px] w-full border-t border-[#e8e8e8] bg-white">
-        <button
-          className="absolute bottom-[26px] right-[208px] h-[50px] w-[112px] rounded-[6px] border border-[#d7d7d7] bg-white text-[22px] leading-none text-[#555] active:bg-[#f6f6f6]"
-          onClick={onClose}
-          type="button"
-        >
-          返回
-        </button>
-        <button
-          className={`absolute bottom-[26px] right-[54px] h-[50px] w-[124px] rounded-[6px] text-[22px] leading-none text-white ${
-            selectedMode ? 'bg-[#58cf9a] active:bg-[#45bf89]' : 'bg-[#c7c7c7]'
-          }`}
-          disabled={!selectedMode}
-          type="button"
-        >
-          下一步
-        </button>
-      </footer>
     </div>
   );
 }
@@ -815,11 +786,223 @@ function SourceCard({
   );
 }
 
+function createMockCapture(role: ImageRole | undefined, index: number): SelectedImage {
+  const roleText = role === 'question' ? '题目图片' : role === 'answer' ? '答案图片' : '作业图片';
+  const accent = role === 'answer' ? '#6f94f7' : '#58cf9a';
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="320" height="220" viewBox="0 0 320 220">
+      <rect width="320" height="220" rx="18" fill="#f7fafc"/>
+      <rect x="28" y="24" width="264" height="172" rx="12" fill="#ffffff" stroke="#d9e1e8" stroke-width="2"/>
+      <rect x="54" y="58" width="118" height="20" rx="10" fill="${accent}"/>
+      <rect x="54" y="96" width="210" height="12" rx="6" fill="#bae9da"/>
+      <rect x="54" y="122" width="170" height="12" rx="6" fill="#c7d7ff"/>
+      <rect x="54" y="148" width="198" height="12" rx="6" fill="#c7d7ff"/>
+      <text x="66" y="73" fill="#ffffff" font-size="16" font-family="Arial, sans-serif">${roleText}${index}</text>
+    </svg>
+  `;
+
+  return {
+    name: `${roleText}${index}.jpg`,
+    role,
+    url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+  };
+}
+
+function revokeImageUrls(images: SelectedImage[]) {
+  images.forEach((image) => {
+    if (image.url.startsWith('blob:')) {
+      URL.revokeObjectURL(image.url);
+    }
+  });
+}
+
+function appendFilesAsImages(files: File[], role?: ImageRole): SelectedImage[] {
+  const rolePrefix = role === 'question' ? '题目' : role === 'answer' ? '答案' : '';
+
+  return files.map((file, index) => ({
+    name: rolePrefix ? `${rolePrefix}_${file.name || index + 1}` : file.name,
+    role,
+    url: URL.createObjectURL(file),
+  }));
+}
+
+function CameraGrid() {
+  return (
+    <>
+      {[1, 2, 3, 4].map((index) => (
+        <div
+          key={`v-${index}`}
+          className="absolute top-0 h-full w-px bg-white/55"
+          style={{ left: `${index * 20}%` }}
+        />
+      ))}
+      {[1, 2, 3].map((index) => (
+        <div
+          key={`h-${index}`}
+          className="absolute left-0 h-px w-full bg-white/55"
+          style={{ top: `${index * 25}%` }}
+        />
+      ))}
+    </>
+  );
+}
+
+function CaptureSimulator({
+  title,
+  currentRole,
+  currentImages,
+  questionCount,
+  answerCount,
+  primaryText,
+  primaryDisabled,
+  onAlbumSelected,
+  onCapture,
+  onClose,
+  onPrimary,
+  onRoleChange,
+}: {
+  title: string;
+  currentRole?: ImageRole;
+  currentImages: SelectedImage[];
+  questionCount: number;
+  answerCount: number;
+  primaryText: string;
+  primaryDisabled: boolean;
+  onAlbumSelected: (files: File[]) => void;
+  onCapture: () => void;
+  onClose: () => void;
+  onPrimary: () => void;
+  onRoleChange?: (role: ImageRole) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const latestImage = currentImages[currentImages.length - 1];
+
+  return (
+    <div className="absolute inset-0 z-30 overflow-hidden bg-[#101010]">
+      <input
+        ref={fileInputRef}
+        accept="image/*"
+        className="hidden"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          if (files.length > 0) {
+            onAlbumSelected(files.slice(0, 24));
+          }
+          event.target.value = '';
+        }}
+        type="file"
+      />
+
+      <div className="absolute left-0 top-0 h-full w-[1784px] overflow-hidden bg-[#d8e0df]">
+        <div className="absolute inset-0 bg-[linear-gradient(135deg,#d8e2e1_0%,#f6f7f4_34%,#cbd2ce_64%,#4c302d_100%)]" />
+        <div className="absolute left-[-120px] top-[730px] h-[580px] w-[980px] rotate-[-12deg] rounded-[120px] bg-[#5b2d2d]/55 blur-[4px]" />
+        <div className="absolute left-[710px] top-[-70px] h-[260px] w-[360px] rotate-[16deg] rounded-[22px] bg-[#267fcc]/45 blur-[1px]" />
+        <CameraGrid />
+        <div className="absolute left-[360px] top-[210px] h-[690px] w-[930px] rotate-[-12deg] rounded-[6px] border-[4px] border-[#55d99d] bg-white/8" />
+        <div className="absolute left-[760px] top-[536px] rounded-[10px] bg-black/45 px-[32px] py-[18px] text-[28px] leading-none text-white">
+          保持资料完整清晰
+        </div>
+
+        <button
+          aria-label="关闭"
+          className="absolute left-[31px] top-[45px] flex h-[52px] w-[52px] items-center justify-center rounded-full bg-black/70 text-white active:bg-black"
+          onClick={onClose}
+          type="button"
+        >
+          <X className="h-[33px] w-[33px]" />
+        </button>
+
+        <div className="absolute left-[120px] top-[44px] rounded-full bg-black/45 px-[26px] py-[14px] text-[25px] font-medium leading-none text-white">
+          {title}
+        </div>
+
+        {currentRole ? (
+          <div className="absolute left-1/2 top-[42px] flex -translate-x-1/2 gap-[12px] rounded-full bg-black/35 p-[7px]">
+            <button
+              className={`h-[44px] rounded-full px-[24px] text-[22px] leading-none ${
+                currentRole === 'question' ? 'bg-[#58cf9a] text-white' : 'text-white/82'
+              }`}
+              onClick={() => onRoleChange?.('question')}
+              type="button"
+            >
+              题目图片 {questionCount}
+            </button>
+            <button
+              className={`h-[44px] rounded-full px-[24px] text-[22px] leading-none ${
+                currentRole === 'answer' ? 'bg-[#6f94f7] text-white' : 'text-white/82'
+              }`}
+              onClick={() => onRoleChange?.('answer')}
+              type="button"
+            >
+              答案图片 {answerCount}
+            </button>
+          </div>
+        ) : null}
+
+        <button
+          className="absolute right-[156px] top-[50px] rounded-full bg-black/55 px-[28px] py-[16px] text-[25px] font-medium leading-none text-white"
+          type="button"
+        >
+          拍摄示例
+        </button>
+      </div>
+
+      <aside className="absolute right-0 top-0 h-full w-[136px] bg-[#1f1f1f]">
+        <button
+          aria-label="从相册选择"
+          className="absolute left-[30px] top-[232px] flex h-[76px] w-[76px] items-center justify-center rounded-full bg-black text-white active:bg-[#303030]"
+          onClick={() => fileInputRef.current?.click()}
+          type="button"
+        >
+          <Images className="h-[38px] w-[38px]" />
+        </button>
+
+        <button
+          aria-label="拍照"
+          className="absolute left-[23px] top-[538px] h-[90px] w-[90px] rounded-full border-[8px] border-white/45 bg-white shadow-[0_0_0_2px_rgba(255,255,255,0.75)] active:scale-95"
+          onClick={onCapture}
+          type="button"
+        />
+
+        <div className="absolute bottom-[38px] left-[18px] h-[86px] w-[102px]">
+          {latestImage ? (
+            <img
+              alt=""
+              className="h-[74px] w-[74px] rounded-[9px] border border-white/70 object-cover"
+              src={latestImage.url}
+            />
+          ) : (
+            <div className="h-[74px] w-[74px] rounded-[9px] border border-white/35 bg-black/40" />
+          )}
+          {currentImages.length > 0 ? (
+            <span className="absolute right-[15px] top-[-10px] flex h-[30px] min-w-[30px] items-center justify-center rounded-full bg-[#58cf9a] px-[8px] text-[17px] font-medium leading-none text-white">
+              {currentImages.length}
+            </span>
+          ) : null}
+          <button
+            className={`absolute bottom-[-6px] right-0 h-[38px] rounded-full px-[14px] text-[18px] font-medium leading-none text-white ${
+              primaryDisabled ? 'bg-[#7a7a7a]' : 'bg-[#58cf9a] active:bg-[#45bf89]'
+            }`}
+            disabled={primaryDisabled}
+            onClick={onPrimary}
+            type="button"
+          >
+            {primaryText}
+          </button>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function AddImageDialog({
   onAlbumSelected,
+  onCameraOpen,
   onClose,
 }: {
   onAlbumSelected: (files: File[]) => void;
+  onCameraOpen: () => void;
   onClose: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -863,6 +1046,7 @@ function AddImageDialog({
           />
           <SourceCard
             icon={<Camera className="h-[42px] w-[42px] stroke-[1.9]" />}
+            onClick={onCameraOpen}
             title="拍照上传"
           />
         </div>
@@ -879,31 +1063,137 @@ export function TabletAiEntryPreview() {
   const scale = useCanvasScale();
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isModeDialogOpen, setIsModeDialogOpen] = useState(false);
+  const [isCaptureOpen, setIsCaptureOpen] = useState(false);
   const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
+  const [questionImages, setQuestionImages] = useState<SelectedImage[]>([]);
+  const [answerImages, setAnswerImages] = useState<SelectedImage[]>([]);
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedMode, setSelectedMode] = useState<RecognitionMode | ''>('');
+  const [captureRole, setCaptureRole] = useState<ImageRole>('question');
+  const selectedImagesRef = useRef(selectedImages);
+  const questionImagesRef = useRef(questionImages);
+  const answerImagesRef = useRef(answerImages);
 
   useEffect(() => {
-    return () => {
-      selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
-    };
+    selectedImagesRef.current = selectedImages;
   }, [selectedImages]);
 
+  useEffect(() => {
+    questionImagesRef.current = questionImages;
+  }, [questionImages]);
+
+  useEffect(() => {
+    answerImagesRef.current = answerImages;
+  }, [answerImages]);
+
+  useEffect(() => () => {
+    revokeImageUrls(selectedImagesRef.current);
+    revokeImageUrls(questionImagesRef.current);
+    revokeImageUrls(answerImagesRef.current);
+  }, []);
+
   const handleAlbumSelected = (files: File[]) => {
-    selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
-    setSelectedImages(
-      files.map((file) => ({
-        name: file.name,
-        url: URL.createObjectURL(file),
-      })),
-    );
+    revokeImageUrls(selectedImages);
+    setSelectedImages(appendFilesAsImages(files));
     setIsUploadDialogOpen(false);
   };
 
   const handleSubjectSelect = (subject: string) => {
     setSelectedSubject(subject);
-    setIsModeDialogOpen(true);
   };
+
+  const handleModeSelect = (mode: RecognitionMode) => {
+    revokeImageUrls(selectedImages);
+    revokeImageUrls(questionImages);
+    revokeImageUrls(answerImages);
+    setSelectedImages([]);
+    setQuestionImages([]);
+    setAnswerImages([]);
+    setSelectedSubject('');
+    setSelectedMode(mode);
+    setIsModeDialogOpen(false);
+
+    if (mode === 'separate_answer') {
+      setCaptureRole('question');
+      setIsCaptureOpen(true);
+      return;
+    }
+
+    setIsUploadDialogOpen(true);
+  };
+
+  const handleOpenCamera = () => {
+    setIsUploadDialogOpen(false);
+    setIsCaptureOpen(true);
+  };
+
+  const getCurrentCaptureImages = () => {
+    if (selectedMode === 'separate_answer') {
+      return captureRole === 'question' ? questionImages : answerImages;
+    }
+
+    return selectedImages;
+  };
+
+  const handleCapture = () => {
+    if (selectedMode === 'separate_answer') {
+      const updater = captureRole === 'question' ? setQuestionImages : setAnswerImages;
+      const currentCount = captureRole === 'question' ? questionImages.length : answerImages.length;
+      updater((currentImages) => [
+        ...currentImages,
+        createMockCapture(captureRole, currentCount + 1),
+      ]);
+      return;
+    }
+
+    setSelectedImages((currentImages) => [
+      ...currentImages,
+      createMockCapture(undefined, currentImages.length + 1),
+    ]);
+  };
+
+  const handleCaptureAlbumSelected = (files: File[]) => {
+    const nextImages = appendFilesAsImages(
+      files,
+      selectedMode === 'separate_answer' ? captureRole : undefined,
+    );
+
+    if (selectedMode === 'separate_answer') {
+      const updater = captureRole === 'question' ? setQuestionImages : setAnswerImages;
+      updater((currentImages) => [...currentImages, ...nextImages]);
+      return;
+    }
+
+    setSelectedImages((currentImages) => [...currentImages, ...nextImages]);
+  };
+
+  const handleCapturePrimary = () => {
+    if (selectedMode === 'separate_answer') {
+      if (captureRole === 'question') {
+        setCaptureRole('answer');
+        return;
+      }
+
+      setSelectedImages([...questionImages, ...answerImages]);
+      setIsCaptureOpen(false);
+      return;
+    }
+
+    setIsCaptureOpen(false);
+  };
+
+  const currentCaptureImages = getCurrentCaptureImages();
+  const captureTitle = selectedMode === 'separate_answer'
+    ? captureRole === 'question'
+      ? '拍摄题目图片'
+      : '拍摄答案图片'
+    : '拍摄作业资料';
+  const capturePrimaryText = selectedMode === 'separate_answer'
+    ? captureRole === 'question'
+      ? '下一步：拍答案'
+      : '去选择学科'
+    : '去选择学科';
+  const capturePrimaryDisabled = currentCaptureImages.length === 0;
 
   return (
     <main className="flex min-h-screen items-center justify-center overflow-hidden bg-[#dfe2e6]">
@@ -924,22 +1214,37 @@ export function TabletAiEntryPreview() {
           <HomeworkPanel />
           <AiPanel
             onSubjectSelect={handleSubjectSelect}
-            onOpenUpload={() => setIsUploadDialogOpen(true)}
+            onOpenUpload={() => setIsModeDialogOpen(true)}
             selectedImages={selectedImages}
             selectedSubject={selectedSubject}
           />
           {isUploadDialogOpen ? (
             <AddImageDialog
               onAlbumSelected={handleAlbumSelected}
+              onCameraOpen={handleOpenCamera}
               onClose={() => setIsUploadDialogOpen(false)}
             />
           ) : null}
           {isModeDialogOpen ? (
             <RecognitionModeDialog
               onClose={() => setIsModeDialogOpen(false)}
-              onModeChange={setSelectedMode}
-              selectedMode={selectedMode}
-              selectedSubject={selectedSubject}
+              onModeSelect={handleModeSelect}
+            />
+          ) : null}
+          {isCaptureOpen ? (
+            <CaptureSimulator
+              answerCount={answerImages.length}
+              currentImages={currentCaptureImages}
+              currentRole={selectedMode === 'separate_answer' ? captureRole : undefined}
+              onAlbumSelected={handleCaptureAlbumSelected}
+              onCapture={handleCapture}
+              onClose={() => setIsCaptureOpen(false)}
+              onPrimary={handleCapturePrimary}
+              onRoleChange={setCaptureRole}
+              primaryDisabled={capturePrimaryDisabled}
+              primaryText={capturePrimaryText}
+              questionCount={questionImages.length}
+              title={captureTitle}
             />
           ) : null}
         </div>
