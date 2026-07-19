@@ -25,6 +25,8 @@ type SelectedImage = {
   url: string;
 };
 
+type RecognitionMode = 'questions_only' | 'same_image_answer' | 'separate_answer';
+
 const assignments = [
   {
     date: '2026-06-10作业',
@@ -246,7 +248,15 @@ function SelectedImageCard({ image }: { image: SelectedImage }) {
   );
 }
 
-function SelectedImagesPanel({ images }: { images: SelectedImage[] }) {
+function SelectedImagesPanel({
+  images,
+  onSubjectSelect,
+  selectedSubject,
+}: {
+  images: SelectedImage[];
+  onSubjectSelect: (subject: string) => void;
+  selectedSubject: string;
+}) {
   return (
     <>
       <div className="absolute right-[27px] top-[285px] text-[24px] leading-none text-[#202124]">
@@ -275,7 +285,12 @@ function SelectedImagesPanel({ images }: { images: SelectedImage[] }) {
         {subjects.map((subject) => (
           <button
             key={subject}
-            className="h-[58px] rounded-[8px] border border-[#dedede] bg-white text-[22px] leading-none text-[#333] active:bg-[#f6f6f6]"
+            className={`h-[58px] rounded-[8px] border text-[22px] leading-none active:bg-[#f6f6f6] ${
+              selectedSubject === subject
+                ? 'border-[#58cf9a] bg-[#eefaf4] text-[#20a874]'
+                : 'border-[#dedede] bg-white text-[#333]'
+            }`}
+            onClick={() => onSubjectSelect(subject)}
             type="button"
           >
             {subject}
@@ -287,10 +302,14 @@ function SelectedImagesPanel({ images }: { images: SelectedImage[] }) {
 }
 
 function AiPanel({
+  onSubjectSelect,
   selectedImages,
+  selectedSubject,
   onOpenUpload,
 }: {
+  onSubjectSelect: (subject: string) => void;
   selectedImages: SelectedImage[];
+  selectedSubject: string;
   onOpenUpload: () => void;
 }) {
   const hasSelectedImages = selectedImages.length > 0;
@@ -319,7 +338,11 @@ function AiPanel({
       </div>
 
       {hasSelectedImages ? (
-        <SelectedImagesPanel images={selectedImages} />
+        <SelectedImagesPanel
+          images={selectedImages}
+          onSubjectSelect={onSubjectSelect}
+          selectedSubject={selectedSubject}
+        />
       ) : (
         <>
           <QuickButton top={279}>帮我布置试卷作业</QuickButton>
@@ -357,6 +380,127 @@ function AiPanel({
         </button>
       </div>
     </aside>
+  );
+}
+
+const recognitionModes: {
+  id: RecognitionMode;
+  title: string;
+  description: string;
+}[] = [
+  {
+    id: 'questions_only',
+    title: '仅识别题目',
+    description: '所有图片进入题目切题和框选，不处理答案内容。',
+  },
+  {
+    id: 'same_image_answer',
+    title: '题目和答案在同一图片中',
+    description: '题目进入切题和框选，答案不框选，后续走全局匹配。',
+  },
+  {
+    id: 'separate_answer',
+    title: '题目和答案分开',
+    description: '后续需要指定题目图片和答案图片，只有题目图片进入框选。',
+  },
+];
+
+function RecognitionModeDialog({
+  onClose,
+  onModeChange,
+  selectedMode,
+  selectedSubject,
+}: {
+  onClose: () => void;
+  onModeChange: (mode: RecognitionMode) => void;
+  selectedMode: RecognitionMode | '';
+  selectedSubject: string;
+}) {
+  return (
+    <div className="absolute inset-0 z-20 bg-black/55">
+      <section className="absolute left-[424px] top-[214px] h-[706px] w-[1072px] rounded-[20px] bg-white shadow-[0_20px_52px_rgba(0,0,0,0.24)]">
+        <header className="absolute left-0 top-0 h-[96px] w-full border-b border-[#eeeeee]">
+          <div className="absolute left-[48px] top-[33px] text-[30px] font-normal leading-none text-[#202124]">
+            识别作业资料
+          </div>
+          <button
+            aria-label="关闭"
+            className="absolute right-[34px] top-[28px] flex h-[44px] w-[44px] items-center justify-center rounded-full text-[#808080] active:bg-[#f2f2f2] active:text-[#222]"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="h-[34px] w-[34px] stroke-[2.2]" />
+          </button>
+        </header>
+
+        <div className="absolute left-[64px] top-[136px] flex items-center gap-[18px]">
+          <div className="text-[30px] font-medium leading-none text-[#202124]">
+            选择识别方式
+          </div>
+          <div className="rounded-full bg-[#f1f7f4] px-[16px] py-[7px] text-[20px] leading-none text-[#3dbb82]">
+            {selectedSubject}
+          </div>
+        </div>
+
+        <div className="absolute left-[64px] top-[204px] grid w-[944px] gap-[18px]">
+          {recognitionModes.map((mode) => {
+            const isSelected = selectedMode === mode.id;
+
+            return (
+              <button
+                key={mode.id}
+                className={`flex h-[116px] items-center rounded-[12px] border px-[28px] text-left active:bg-[#f7fbf9] ${
+                  isSelected
+                    ? 'border-[#58cf9a] bg-[#f2fbf7]'
+                    : 'border-[#e5e5e5] bg-white'
+                }`}
+                onClick={() => onModeChange(mode.id)}
+                type="button"
+              >
+                <div
+                  className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border ${
+                    isSelected
+                      ? 'border-[#58cf9a] bg-[#58cf9a]'
+                      : 'border-[#cfcfcf] bg-white'
+                  }`}
+                >
+                  {isSelected ? (
+                    <div className="h-[10px] w-[10px] rounded-full bg-white" />
+                  ) : null}
+                </div>
+                <div className="ml-[22px] min-w-0">
+                  <div className="text-[26px] font-medium leading-none text-[#202124]">
+                    {mode.title}
+                  </div>
+                  <div className="mt-[14px] text-[21px] leading-none text-[#727a76]">
+                    {mode.description}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <footer className="absolute bottom-0 left-0 h-[96px] w-full border-t border-[#eeeeee]">
+          <button
+            className="absolute bottom-[23px] right-[196px] h-[50px] w-[112px] rounded-[6px] border border-[#d7d7d7] bg-white text-[22px] leading-none text-[#555] active:bg-[#f6f6f6]"
+            onClick={onClose}
+            type="button"
+          >
+            返回
+          </button>
+          <button
+            className={`absolute bottom-[23px] right-[48px] h-[50px] w-[124px] rounded-[6px] text-[22px] leading-none text-white ${
+              selectedMode ? 'bg-[#58cf9a] active:bg-[#45bf89]' : 'bg-[#c7c7c7]'
+            }`}
+            disabled={!selectedMode}
+            type="button"
+          >
+            下一步
+          </button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
@@ -448,7 +592,10 @@ function AddImageDialog({
 export function TabletAiEntryPreview() {
   const scale = useCanvasScale();
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isModeDialogOpen, setIsModeDialogOpen] = useState(false);
   const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
+  const [selectedSubject, setSelectedSubject] = useState('');
+  const [selectedMode, setSelectedMode] = useState<RecognitionMode | ''>('');
 
   useEffect(() => {
     return () => {
@@ -465,6 +612,11 @@ export function TabletAiEntryPreview() {
       })),
     );
     setIsUploadDialogOpen(false);
+  };
+
+  const handleSubjectSelect = (subject: string) => {
+    setSelectedSubject(subject);
+    setIsModeDialogOpen(true);
   };
 
   return (
@@ -485,13 +637,23 @@ export function TabletAiEntryPreview() {
         >
           <HomeworkPanel />
           <AiPanel
+            onSubjectSelect={handleSubjectSelect}
             onOpenUpload={() => setIsUploadDialogOpen(true)}
             selectedImages={selectedImages}
+            selectedSubject={selectedSubject}
           />
           {isUploadDialogOpen ? (
             <AddImageDialog
               onAlbumSelected={handleAlbumSelected}
               onClose={() => setIsUploadDialogOpen(false)}
+            />
+          ) : null}
+          {isModeDialogOpen ? (
+            <RecognitionModeDialog
+              onClose={() => setIsModeDialogOpen(false)}
+              onModeChange={setSelectedMode}
+              selectedMode={selectedMode}
+              selectedSubject={selectedSubject}
             />
           ) : null}
         </div>
