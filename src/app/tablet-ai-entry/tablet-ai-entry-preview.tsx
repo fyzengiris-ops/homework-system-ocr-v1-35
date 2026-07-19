@@ -387,72 +387,281 @@ function AiPanel({
 const recognitionModes: {
   id: RecognitionMode;
   title: string;
+  badge?: string;
   description: string;
 }[] = [
   {
     id: 'questions_only',
     title: '仅识别题目',
-    description: '所有图片进入题目切题和框选，不处理答案内容。',
+    description: '适用于只包含题目、不包含答案解析的资料',
   },
   {
     id: 'same_image_answer',
-    title: '题目和答案在同一图片中',
-    description: '题目进入切题和框选，答案不框选，后续走全局匹配。',
+    title: '题目+答案',
+    badge: '同文件',
+    description: '适用于题目与答案解析紧挨着出现的资料',
   },
   {
     id: 'separate_answer',
-    title: '题目和答案分开',
-    description: '后续需要指定题目图片和答案图片，只有题目图片进入框选。',
+    title: '题目+答案',
+    badge: '不同文件',
+    description: '适用于题目资料与答案解析资料分开拍摄的场景',
   },
 ];
 
-function ModeDiagram({ mode }: { mode: RecognitionMode }) {
-  if (mode === 'questions_only') {
-    return (
-      <div className="relative h-[82px] w-[188px] rounded-[8px] bg-white shadow-[inset_0_0_0_1px_#edf0ef]">
-        <div className="absolute left-[18px] top-[16px] h-[18px] w-[116px] rounded-[3px] bg-[#dff5ea]" />
-        <div className="absolute left-[18px] top-[48px] h-[18px] w-[132px] rounded-[3px] bg-[#dff5ea]" />
-        <div className="absolute left-[14px] top-[12px] h-[26px] w-[124px] rounded-[5px] border-[2px] border-[#58cf9a]" />
-        <div className="absolute left-[14px] top-[44px] h-[26px] w-[140px] rounded-[5px] border-[2px] border-[#58cf9a]" />
-        <div className="absolute right-[17px] top-[14px] text-[16px] font-medium leading-none text-[#39b77e]">
-          题目框
-        </div>
-      </div>
-    );
-  }
+function DiagramLine({
+  tone = 'question',
+  width = 'w-full',
+}: {
+  tone?: 'question' | 'answer' | 'muted';
+  width?: string;
+}) {
+  const color =
+    tone === 'question'
+      ? 'bg-[#a9ead8]'
+      : tone === 'answer'
+        ? 'bg-[#adc5ff]'
+        : 'bg-[#d9dde3]';
 
-  if (mode === 'same_image_answer') {
-    return (
-      <div className="relative h-[82px] w-[188px] rounded-[8px] bg-white shadow-[inset_0_0_0_1px_#edf0ef]">
-        <div className="absolute left-[18px] top-[14px] h-[18px] w-[118px] rounded-[3px] bg-[#dff5ea]" />
-        <div className="absolute left-[14px] top-[10px] h-[26px] w-[126px] rounded-[5px] border-[2px] border-[#58cf9a]" />
-        <div className="absolute left-[18px] top-[51px] h-[16px] w-[132px] rounded-[3px] bg-[#fff1d8]" />
-        <div className="absolute left-[18px] top-[40px] text-[15px] font-medium leading-none text-[#d08a22]">
-          答案全局匹配
-        </div>
+  return <div className={`h-[10px] rounded-full ${color} ${width}`} />;
+}
+
+function DiagramTag({
+  children,
+  tone = 'question',
+}: {
+  children: React.ReactNode;
+  tone?: 'question' | 'answer';
+}) {
+  const toneClass =
+    tone === 'question'
+      ? 'bg-[#4fc6b1] text-white'
+      : 'bg-[#6f94f7] text-white';
+
+  return (
+    <div className={`inline-flex h-[30px] items-center rounded-[3px] px-[9px] text-[14px] font-medium leading-none ${toneClass}`}>
+      {children}
+    </div>
+  );
+}
+
+function SourcePageFrame({
+  title = '资料页',
+  children,
+  className = '',
+}: {
+  title?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`relative h-full rounded-[10px] border border-[#d7dde3] bg-white shadow-[0_2px_8px_rgba(31,44,58,0.08)] ${className}`}>
+      <div className="absolute left-0 top-0 flex h-[50px] w-full items-center justify-center text-[18px] leading-none text-[#4b5563]">
+        {title}
       </div>
+      <div className="absolute left-[20px] right-[20px] top-[60px] bottom-[18px]">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ResultPreview({ rich }: { rich: boolean }) {
+  if (!rich) {
+    return (
+      <SourcePageFrame title="识别结果">
+        <div className="space-y-[26px] pt-[4px]">
+          {[1, 2, 3].map((index) => (
+            <div key={index}>
+              <div className="mb-[10px] text-[16px] font-medium leading-none text-[#475569]">
+                题目{index}
+              </div>
+              <div className="space-y-[9px]">
+                <DiagramLine width="w-full" />
+                <DiagramLine width="w-[74%]" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </SourcePageFrame>
     );
   }
 
   return (
-    <div className="relative h-[82px] w-[188px]">
-      <div className="absolute left-0 top-0 h-[82px] w-[84px] rounded-[8px] bg-white shadow-[inset_0_0_0_1px_#edf0ef]">
-        <div className="absolute left-[12px] top-[18px] h-[18px] w-[48px] rounded-[3px] bg-[#dff5ea]" />
-        <div className="absolute left-[9px] top-[14px] h-[26px] w-[56px] rounded-[5px] border-[2px] border-[#58cf9a]" />
-        <div className="absolute bottom-[11px] left-[18px] text-[15px] font-medium leading-none text-[#39b77e]">
-          题目
+    <SourcePageFrame title="识别结果">
+      <div className="space-y-[20px] pt-[2px]">
+        <div>
+          <div className="mb-[10px] text-[16px] font-medium leading-none text-[#475569]">题目1</div>
+          <div className="space-y-[9px]">
+            <DiagramLine />
+            <DiagramLine width="w-[78%]" />
+            <DiagramLine width="w-[58%]" />
+          </div>
+        </div>
+        <div>
+          <div className="mb-[10px] text-[15px] leading-none text-[#475569]">答案：</div>
+          <div className="space-y-[9px]">
+            <DiagramLine tone="answer" />
+            <DiagramLine tone="answer" width="w-[62%]" />
+          </div>
+        </div>
+        <div>
+          <div className="mb-[10px] text-[15px] leading-none text-[#475569]">解析：</div>
+          <div className="space-y-[9px]">
+            <DiagramLine tone="answer" />
+            <DiagramLine tone="answer" width="w-[68%]" />
+          </div>
         </div>
       </div>
-      <div className="absolute right-0 top-0 h-[82px] w-[84px] rounded-[8px] bg-white shadow-[inset_0_0_0_1px_#edf0ef]">
-        <div className="absolute left-[13px] top-[20px] h-[16px] w-[54px] rounded-[3px] bg-[#fff1d8]" />
-        <div className="absolute left-[13px] top-[43px] h-[16px] w-[46px] rounded-[3px] bg-[#fff1d8]" />
-        <div className="absolute bottom-[11px] left-[18px] text-[15px] font-medium leading-none text-[#d08a22]">
-          答案
-        </div>
+    </SourcePageFrame>
+  );
+}
+
+function QuestionBlock({ label, top }: { label: string; top: number }) {
+  return (
+    <div
+      className="absolute left-[18px] h-[58px] w-[218px] rounded-[6px] border border-[#68d3c2] bg-[#e8faf5]"
+      style={{ top }}
+    >
+      <div className="absolute -top-[30px] left-0">
+        <DiagramTag>{label}</DiagramTag>
       </div>
-      <div className="absolute left-[88px] top-[34px] h-[2px] w-[12px] bg-[#d8d8d8]" />
+      <div className="absolute left-[16px] right-[14px] top-[15px] space-y-[9px]">
+        <DiagramLine />
+        <DiagramLine width="w-[68%]" />
+      </div>
     </div>
   );
+}
+
+function AdjacentAnswerBlock({ label, top }: { label: string; top: number }) {
+  return (
+    <div
+      className="absolute left-[18px] h-[66px] w-[258px] rounded-[6px] border border-[#68d3c2] bg-[#e8faf5]"
+      style={{ top }}
+    >
+      <div className="absolute -top-[30px] left-0">
+        <DiagramTag>{label}</DiagramTag>
+      </div>
+      <div className="absolute left-[18px] right-[18px] top-[17px] space-y-[9px]">
+        <DiagramLine />
+        <DiagramLine width="w-[66%]" />
+      </div>
+      <div className="absolute left-[18px] top-[78px] space-y-[10px]">
+        <DiagramLine tone="answer" width="w-[224px]" />
+        <DiagramLine tone="answer" width="w-[172px]" />
+      </div>
+    </div>
+  );
+}
+
+function CompactQuestionBlock({
+  label,
+  top,
+  tone = 'question',
+}: {
+  label: string;
+  top: number;
+  tone?: 'question' | 'answer';
+}) {
+  const blockClass =
+    tone === 'question'
+      ? 'border-[#68d3c2] bg-[#e8faf5]'
+      : 'border-[#aec3ff] bg-[#eef3ff]';
+
+  return (
+    <div
+      className={`absolute left-[12px] h-[52px] w-[108px] rounded-[6px] border ${blockClass}`}
+      style={{ top }}
+    >
+      <div className="absolute -top-[26px] left-0">
+        <DiagramTag tone={tone}>
+          {label}
+        </DiagramTag>
+      </div>
+      <div className="absolute left-[10px] right-[8px] top-[13px] space-y-[8px]">
+        <DiagramLine tone={tone} />
+        <DiagramLine tone={tone} width="w-[62%]" />
+      </div>
+    </div>
+  );
+}
+
+function CompactFileFrame({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative h-full rounded-[10px] border border-[#d7dde3] bg-white shadow-[0_2px_8px_rgba(31,44,58,0.08)]">
+      <div className="absolute left-0 top-[18px] w-full text-center text-[15px] leading-none text-[#4b5563]">
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function QuestionOnlyDiagram() {
+  return (
+    <div className="grid h-full grid-cols-[1.34fr_0.76fr] gap-[18px]">
+      <SourcePageFrame>
+        <QuestionBlock label="题目1" top={42} />
+        <QuestionBlock label="题目2" top={134} />
+        <QuestionBlock label="题目3" top={226} />
+      </SourcePageFrame>
+      <ResultPreview rich={false} />
+    </div>
+  );
+}
+
+function SameFileDiagram() {
+  return (
+    <div className="grid h-full grid-cols-[1.34fr_0.76fr] gap-[18px]">
+      <SourcePageFrame>
+        <AdjacentAnswerBlock label="题目1+答案/解析" top={42} />
+        <AdjacentAnswerBlock label="题目2+答案/解析" top={190} />
+      </SourcePageFrame>
+      <ResultPreview rich />
+    </div>
+  );
+}
+
+function SeparateFileDiagram() {
+  return (
+    <div className="grid h-full grid-cols-[0.9fr_0.9fr_1.08fr] gap-[14px]">
+      <CompactFileFrame title="《试卷题目文件》">
+        {[1, 2, 3].map((index, itemIndex) => (
+          <CompactQuestionBlock key={index} label={`题目${index}`} top={72 + itemIndex * 86} />
+        ))}
+      </CompactFileFrame>
+      <CompactFileFrame title="《试卷答案文件》">
+        {[1, 2, 3].map((index, itemIndex) => (
+          <CompactQuestionBlock
+            key={index}
+            label={`题目${index}答案解析`}
+            tone="answer"
+            top={72 + itemIndex * 86}
+          />
+        ))}
+      </CompactFileFrame>
+      <ResultPreview rich />
+    </div>
+  );
+}
+
+function ModeDiagram({ mode }: { mode: RecognitionMode }) {
+  if (mode === 'questions_only') {
+    return <QuestionOnlyDiagram />;
+  }
+
+  if (mode === 'same_image_answer') {
+    return <SameFileDiagram />;
+  }
+
+  return <SeparateFileDiagram />;
 }
 
 function RecognitionModeDialog({
@@ -475,7 +684,7 @@ function RecognitionModeDialog({
       </header>
 
       <main className="absolute left-0 top-[96px] h-[1002px] w-full">
-        <div className="absolute left-0 top-[58px] w-full text-center">
+        <div className="absolute left-0 top-[50px] w-full text-center">
           <h2 className="text-[34px] font-medium leading-none text-[#1f2933]">
             选择识别方式
           </h2>
@@ -487,7 +696,7 @@ function RecognitionModeDialog({
           </div>
         </div>
 
-        <div className="absolute left-[136px] top-[196px] grid w-[1648px] grid-cols-3 gap-[28px]">
+        <div className="absolute left-[44px] top-[190px] grid w-[1832px] grid-cols-3 gap-[24px]">
           {recognitionModes.map((mode) => {
             const isSelected = selectedMode === mode.id;
             const iconColor =
@@ -502,12 +711,12 @@ function RecognitionModeDialog({
                 : mode.id === 'same_image_answer'
                   ? 'border-purple-400 bg-purple-50/40 shadow-purple-100/70'
                   : 'border-amber-400 bg-amber-50/40 shadow-amber-100/70';
-            const badge =
+            const badgeColor =
               mode.id === 'same_image_answer'
-                ? '同图片'
+                ? 'bg-[#eaf5ff] text-[#2698ff]'
                 : mode.id === 'separate_answer'
-                  ? '分开'
-                  : '';
+                  ? 'bg-[#fff5dc] text-[#f59f22]'
+                  : 'bg-blue-50 text-blue-600';
             const Icon =
               mode.id === 'questions_only'
                 ? FileText
@@ -518,42 +727,40 @@ function RecognitionModeDialog({
             return (
               <button
                 key={mode.id}
-                className={`group flex h-[560px] cursor-pointer flex-col rounded-[18px] border-2 bg-white p-[28px] text-left shadow-sm transition-all active:scale-[0.995] ${
-                  isSelected ? selectedClass : 'border-slate-200'
+                className={`group flex h-[600px] cursor-pointer flex-col rounded-[16px] border-2 bg-white px-[34px] pb-[32px] pt-[36px] text-left shadow-[0_12px_34px_rgba(31,44,58,0.10)] transition-all active:scale-[0.995] ${
+                  isSelected ? selectedClass : 'border-white'
                 }`}
                 onClick={() => onModeChange(mode.id)}
                 type="button"
               >
-                <div className="mb-[26px] flex items-start gap-[18px]">
+                <div className="mb-[30px] flex items-start gap-[18px]">
                   <div className={`flex h-[56px] w-[56px] shrink-0 items-center justify-center rounded-[14px] ${iconColor}`}>
                     <Icon className="h-[28px] w-[28px]" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-[12px]">
-                      <span className="text-[27px] font-medium leading-none text-slate-800">
+                      <span className="text-[30px] font-bold leading-none text-[#222831]">
                         {mode.title}
                       </span>
-                      {badge ? (
-                        <span className="rounded border border-slate-200 bg-slate-50 px-[10px] py-[5px] text-[16px] font-medium leading-none text-slate-500">
-                          {badge}
+                      {mode.badge ? (
+                        <span className={`rounded-full px-[12px] py-[6px] text-[18px] font-medium leading-none ${badgeColor}`}>
+                          {mode.badge}
                         </span>
                       ) : null}
                       {isSelected ? (
-                        <span className="rounded-full bg-emerald-50 px-[10px] py-[5px] text-[16px] font-medium leading-none text-emerald-600">
+                        <span className="rounded-full bg-emerald-50 px-[10px] py-[6px] text-[16px] font-medium leading-none text-emerald-600">
                           已选
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-[12px] text-[19px] leading-[30px] text-slate-500">
+                    <p className="mt-[22px] text-[22px] leading-none text-[#7b818a]">
                       {mode.description}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex min-h-0 flex-1 items-center justify-center rounded-[14px] border border-slate-200 bg-slate-50/80 p-[24px]">
-                  <div className="origin-center scale-[2.08]">
-                    <ModeDiagram mode={mode.id} />
-                  </div>
+                <div className="min-h-0 flex-1 rounded-[8px] border border-[#edf0f2] bg-[#fbfcfd] p-[18px]">
+                  <ModeDiagram mode={mode.id} />
                 </div>
               </button>
             );
