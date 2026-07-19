@@ -466,67 +466,77 @@ function RecognitionModeDialog({
   selectedSubject: string;
 }) {
   return (
-    <div className="absolute inset-0 z-20 bg-black/55">
-      <section className="absolute left-[424px] top-[214px] h-[706px] w-[1072px] rounded-[20px] bg-white shadow-[0_20px_52px_rgba(0,0,0,0.24)]">
-        <header className="absolute left-0 top-0 h-[96px] w-full border-b border-[#eeeeee]">
-          <div className="absolute left-[48px] top-[33px] text-[30px] font-normal leading-none text-[#202124]">
-            识别作业资料
-          </div>
-          <button
-            aria-label="关闭"
-            className="absolute right-[34px] top-[28px] flex h-[44px] w-[44px] items-center justify-center rounded-full text-[#808080] active:bg-[#f2f2f2] active:text-[#222]"
-            onClick={onClose}
-            type="button"
-          >
-            <X className="h-[34px] w-[34px] stroke-[2.2]" />
-          </button>
-        </header>
+    <div className="absolute inset-0 z-20 bg-[#f5f7f7]">
+      <header className="absolute left-0 top-0 h-[106px] w-full border-b border-[#e8e8e8] bg-white">
+        <button
+          className="absolute left-[38px] top-[33px] flex h-[44px] items-center gap-[10px] text-[26px] leading-none text-[#555] active:text-[#222]"
+          onClick={onClose}
+          type="button"
+        >
+          <ChevronLeft className="h-[30px] w-[30px]" />
+          返回
+        </button>
+        <div className="absolute left-[192px] top-[36px] text-[29px] font-normal leading-none text-[#202124]">
+          识别作业资料
+        </div>
+        <div className="absolute left-[618px] top-[34px] flex items-center gap-[22px]">
+          {['添加资料', '选择识别方式', '选择识别内容', '检查结果'].map((step, index) => (
+            <div key={step} className="flex items-center gap-[22px]">
+              <div
+                className={`text-[21px] leading-none ${
+                  index === 1 ? 'font-medium text-[#24b77c]' : 'text-[#9a9a9a]'
+                }`}
+              >
+                {step}
+              </div>
+              {index < 3 ? <div className="h-[1px] w-[42px] bg-[#e2e2e2]" /> : null}
+            </div>
+          ))}
+        </div>
+      </header>
 
-        <div className="absolute left-[64px] top-[136px] flex items-center gap-[18px]">
-          <div className="text-[30px] font-medium leading-none text-[#202124]">
+      <main className="absolute left-0 top-[106px] h-[992px] w-full">
+        <div className="absolute left-[126px] top-[78px] flex items-center gap-[18px]">
+          <div className="text-[38px] font-medium leading-none text-[#202124]">
             选择识别方式
           </div>
-          <div className="rounded-full bg-[#f1f7f4] px-[16px] py-[7px] text-[20px] leading-none text-[#3dbb82]">
+          <div className="rounded-full bg-[#eaf7f1] px-[18px] py-[8px] text-[21px] leading-none text-[#31ad76]">
             {selectedSubject}
           </div>
         </div>
 
-        <div className="absolute left-[64px] top-[198px] grid w-[944px] gap-[18px]">
+        <div className="absolute left-[126px] top-[166px] grid w-[1668px] grid-cols-3 gap-[30px]">
           {recognitionModes.map((mode) => {
             const isSelected = selectedMode === mode.id;
 
             return (
               <button
                 key={mode.id}
-                className={`flex h-[126px] items-center rounded-[12px] border px-[24px] text-left active:bg-[#f7fbf9] ${
+                className={`relative h-[566px] rounded-[14px] border bg-white text-left shadow-[0_10px_28px_rgba(25,43,36,0.06)] active:bg-[#f7fbf9] ${
                   isSelected
-                    ? 'border-[#58cf9a] bg-[#f2fbf7]'
-                    : 'border-[#e5e5e5] bg-white'
+                    ? 'border-[#58cf9a] shadow-[0_12px_32px_rgba(50,184,126,0.14)]'
+                    : 'border-[#e7e7e7]'
                 }`}
                 onClick={() => onModeChange(mode.id)}
                 type="button"
               >
-                <div className="flex h-[94px] w-[220px] shrink-0 items-center justify-center rounded-[10px] bg-[#f7f8f8]">
-                  <ModeDiagram mode={mode.id} />
+                <div className="absolute right-[28px] top-[28px] flex h-[30px] w-[30px] items-center justify-center rounded-full border border-[#d2d2d2] bg-white">
+                  {isSelected ? (
+                    <div className="h-[18px] w-[18px] rounded-full bg-[#58cf9a]" />
+                  ) : null}
                 </div>
-                <div className="ml-[26px] min-w-0 flex-1">
-                  <div className="flex items-center gap-[14px]">
-                    <div className="text-[26px] font-medium leading-none text-[#202124]">
-                      {mode.title}
-                    </div>
-                    <div
-                      className={`flex h-[24px] w-[24px] items-center justify-center rounded-full border ${
-                        isSelected
-                          ? 'border-[#58cf9a] bg-[#58cf9a]'
-                          : 'border-[#cfcfcf] bg-white'
-                      }`}
-                    >
-                      {isSelected ? (
-                        <div className="h-[8px] w-[8px] rounded-full bg-white" />
-                      ) : null}
-                    </div>
+
+                <div className="absolute left-[38px] top-[76px] flex h-[260px] w-[474px] items-center justify-center rounded-[12px] bg-[#f7f8f8]">
+                  <div className="origin-center scale-[1.86]">
+                    <ModeDiagram mode={mode.id} />
                   </div>
-                  <div className="mt-[16px] text-[21px] leading-none text-[#727a76]">
+                </div>
+
+                <div className="absolute left-[38px] top-[382px]">
+                  <div className="text-[30px] font-medium leading-none text-[#202124]">
+                    {mode.title}
+                  </div>
+                  <div className="mt-[22px] max-w-[460px] text-[22px] leading-[34px] text-[#6f7672]">
                     {mode.description}
                   </div>
                 </div>
@@ -534,26 +544,26 @@ function RecognitionModeDialog({
             );
           })}
         </div>
+      </main>
 
-        <footer className="absolute bottom-0 left-0 h-[96px] w-full border-t border-[#eeeeee]">
-          <button
-            className="absolute bottom-[23px] right-[196px] h-[50px] w-[112px] rounded-[6px] border border-[#d7d7d7] bg-white text-[22px] leading-none text-[#555] active:bg-[#f6f6f6]"
-            onClick={onClose}
-            type="button"
-          >
-            返回
-          </button>
-          <button
-            className={`absolute bottom-[23px] right-[48px] h-[50px] w-[124px] rounded-[6px] text-[22px] leading-none text-white ${
-              selectedMode ? 'bg-[#58cf9a] active:bg-[#45bf89]' : 'bg-[#c7c7c7]'
-            }`}
-            disabled={!selectedMode}
-            type="button"
-          >
-            下一步
-          </button>
-        </footer>
-      </section>
+      <footer className="absolute bottom-0 left-0 h-[102px] w-full border-t border-[#e8e8e8] bg-white">
+        <button
+          className="absolute bottom-[26px] right-[208px] h-[50px] w-[112px] rounded-[6px] border border-[#d7d7d7] bg-white text-[22px] leading-none text-[#555] active:bg-[#f6f6f6]"
+          onClick={onClose}
+          type="button"
+        >
+          返回
+        </button>
+        <button
+          className={`absolute bottom-[26px] right-[54px] h-[50px] w-[124px] rounded-[6px] text-[22px] leading-none text-white ${
+            selectedMode ? 'bg-[#58cf9a] active:bg-[#45bf89]' : 'bg-[#c7c7c7]'
+          }`}
+          disabled={!selectedMode}
+          type="button"
+        >
+          下一步
+        </button>
+      </footer>
     </div>
   );
 }
