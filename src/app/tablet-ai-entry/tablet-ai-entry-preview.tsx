@@ -405,6 +405,55 @@ const recognitionModes: {
   },
 ];
 
+function ModeDiagram({ mode }: { mode: RecognitionMode }) {
+  if (mode === 'questions_only') {
+    return (
+      <div className="relative h-[82px] w-[188px] rounded-[8px] bg-white shadow-[inset_0_0_0_1px_#edf0ef]">
+        <div className="absolute left-[18px] top-[16px] h-[18px] w-[116px] rounded-[3px] bg-[#dff5ea]" />
+        <div className="absolute left-[18px] top-[48px] h-[18px] w-[132px] rounded-[3px] bg-[#dff5ea]" />
+        <div className="absolute left-[14px] top-[12px] h-[26px] w-[124px] rounded-[5px] border-[2px] border-[#58cf9a]" />
+        <div className="absolute left-[14px] top-[44px] h-[26px] w-[140px] rounded-[5px] border-[2px] border-[#58cf9a]" />
+        <div className="absolute right-[17px] top-[14px] text-[16px] font-medium leading-none text-[#39b77e]">
+          题目框
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'same_image_answer') {
+    return (
+      <div className="relative h-[82px] w-[188px] rounded-[8px] bg-white shadow-[inset_0_0_0_1px_#edf0ef]">
+        <div className="absolute left-[18px] top-[14px] h-[18px] w-[118px] rounded-[3px] bg-[#dff5ea]" />
+        <div className="absolute left-[14px] top-[10px] h-[26px] w-[126px] rounded-[5px] border-[2px] border-[#58cf9a]" />
+        <div className="absolute left-[18px] top-[51px] h-[16px] w-[132px] rounded-[3px] bg-[#fff1d8]" />
+        <div className="absolute left-[18px] top-[40px] text-[15px] font-medium leading-none text-[#d08a22]">
+          答案全局匹配
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-[82px] w-[188px]">
+      <div className="absolute left-0 top-0 h-[82px] w-[84px] rounded-[8px] bg-white shadow-[inset_0_0_0_1px_#edf0ef]">
+        <div className="absolute left-[12px] top-[18px] h-[18px] w-[48px] rounded-[3px] bg-[#dff5ea]" />
+        <div className="absolute left-[9px] top-[14px] h-[26px] w-[56px] rounded-[5px] border-[2px] border-[#58cf9a]" />
+        <div className="absolute bottom-[11px] left-[18px] text-[15px] font-medium leading-none text-[#39b77e]">
+          题目
+        </div>
+      </div>
+      <div className="absolute right-0 top-0 h-[82px] w-[84px] rounded-[8px] bg-white shadow-[inset_0_0_0_1px_#edf0ef]">
+        <div className="absolute left-[13px] top-[20px] h-[16px] w-[54px] rounded-[3px] bg-[#fff1d8]" />
+        <div className="absolute left-[13px] top-[43px] h-[16px] w-[46px] rounded-[3px] bg-[#fff1d8]" />
+        <div className="absolute bottom-[11px] left-[18px] text-[15px] font-medium leading-none text-[#d08a22]">
+          答案
+        </div>
+      </div>
+      <div className="absolute left-[88px] top-[34px] h-[2px] w-[12px] bg-[#d8d8d8]" />
+    </div>
+  );
+}
+
 function RecognitionModeDialog({
   onClose,
   onModeChange,
@@ -442,14 +491,14 @@ function RecognitionModeDialog({
           </div>
         </div>
 
-        <div className="absolute left-[64px] top-[204px] grid w-[944px] gap-[18px]">
+        <div className="absolute left-[64px] top-[198px] grid w-[944px] gap-[18px]">
           {recognitionModes.map((mode) => {
             const isSelected = selectedMode === mode.id;
 
             return (
               <button
                 key={mode.id}
-                className={`flex h-[116px] items-center rounded-[12px] border px-[28px] text-left active:bg-[#f7fbf9] ${
+                className={`flex h-[126px] items-center rounded-[12px] border px-[24px] text-left active:bg-[#f7fbf9] ${
                   isSelected
                     ? 'border-[#58cf9a] bg-[#f2fbf7]'
                     : 'border-[#e5e5e5] bg-white'
@@ -457,22 +506,27 @@ function RecognitionModeDialog({
                 onClick={() => onModeChange(mode.id)}
                 type="button"
               >
-                <div
-                  className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border ${
-                    isSelected
-                      ? 'border-[#58cf9a] bg-[#58cf9a]'
-                      : 'border-[#cfcfcf] bg-white'
-                  }`}
-                >
-                  {isSelected ? (
-                    <div className="h-[10px] w-[10px] rounded-full bg-white" />
-                  ) : null}
+                <div className="flex h-[94px] w-[220px] shrink-0 items-center justify-center rounded-[10px] bg-[#f7f8f8]">
+                  <ModeDiagram mode={mode.id} />
                 </div>
-                <div className="ml-[22px] min-w-0">
-                  <div className="text-[26px] font-medium leading-none text-[#202124]">
-                    {mode.title}
+                <div className="ml-[26px] min-w-0 flex-1">
+                  <div className="flex items-center gap-[14px]">
+                    <div className="text-[26px] font-medium leading-none text-[#202124]">
+                      {mode.title}
+                    </div>
+                    <div
+                      className={`flex h-[24px] w-[24px] items-center justify-center rounded-full border ${
+                        isSelected
+                          ? 'border-[#58cf9a] bg-[#58cf9a]'
+                          : 'border-[#cfcfcf] bg-white'
+                      }`}
+                    >
+                      {isSelected ? (
+                        <div className="h-[8px] w-[8px] rounded-full bg-white" />
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="mt-[14px] text-[21px] leading-none text-[#727a76]">
+                  <div className="mt-[16px] text-[21px] leading-none text-[#727a76]">
                     {mode.description}
                   </div>
                 </div>
