@@ -158,14 +158,11 @@ function AssignmentBlock({
 function RobotMark() {
   return (
     <div className="relative h-[62px] w-[64px]">
-      <div className="absolute bottom-0 left-[6px] h-[10px] w-[46px] rounded-full bg-[#d8f2e8]" />
-      <div className="absolute left-[9px] top-[8px] h-[38px] w-[43px] rounded-[10px] bg-[#009a65] shadow-sm">
-        <div className="absolute -top-[10px] left-[18px] h-[13px] w-[5px] rounded-full bg-[#6bd28f]" />
-        <div className="absolute -top-[15px] left-[14px] h-[8px] w-[8px] rounded-full bg-[#72d885]" />
-        <div className="absolute left-[9px] top-[12px] h-[9px] w-[7px] rounded-[3px] bg-[#b8f5dd]" />
-        <div className="absolute right-[9px] top-[12px] h-[9px] w-[7px] rounded-[3px] bg-[#b8f5dd]" />
-        <div className="absolute bottom-[8px] left-[15px] h-[3px] w-[13px] rounded-full bg-[#b8f5dd]" />
-      </div>
+      <img
+        alt="AI小乐"
+        className="h-full w-full object-contain"
+        src="/ai-mascot.jpg"
+      />
     </div>
   );
 }
