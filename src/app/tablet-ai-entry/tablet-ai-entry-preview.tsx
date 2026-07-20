@@ -29,6 +29,9 @@ type SelectedImage = {
 
 type RecognitionMode = 'questions_only' | 'same_image_answer' | 'separate_answer';
 type ImageRole = 'question' | 'answer';
+type SubjectMode = 'single' | 'multiple';
+
+const SINGLE_SUBJECT = '高中数学';
 
 const assignments = [
   {
@@ -251,40 +254,22 @@ function SelectedImageCard({ image }: { image: SelectedImage }) {
   );
 }
 
-function SelectedImagesPanel({
-  images,
+function SubjectSelectionPanel({
   onSubjectSelect,
   selectedSubject,
 }: {
-  images: SelectedImage[];
   onSubjectSelect: (subject: string) => void;
   selectedSubject: string;
 }) {
   return (
     <>
-      <div className="absolute right-[27px] top-[285px] text-[24px] leading-none text-[#202124]">
-        帮我识别以下资料
-      </div>
-      <div className="absolute right-[31px] top-[353px] w-[348px] rounded-[10px] bg-[#f7f8fb] p-[14px]">
-        <div className="grid gap-[14px]">
-          {images.slice(0, 3).map((image) => (
-            <SelectedImageCard key={image.url} image={image} />
-          ))}
-        </div>
-        {images.length > 3 ? (
-          <div className="mt-[12px] text-right text-[20px] leading-none text-[#8a8a8a]">
-            另有 {images.length - 3} 张图片
-          </div>
-        ) : null}
-      </div>
-
-      <div className="absolute left-[22px] top-[634px]">
+      <div className="absolute left-[22px] top-[345px]">
         <RobotMark />
       </div>
-      <div className="absolute left-[106px] top-[646px] text-[24px] leading-none text-[#303030]">
-        请确认这次识别资料的学科
+      <div className="absolute left-[106px] top-[354px] h-[76px] w-[600px] rounded-[8px] bg-[#f7f8fb] px-[22px] py-[18px] text-[24px] leading-[40px] text-[#303030]">
+        请先选择这次识别资料的学段学科
       </div>
-      <div className="absolute left-[88px] top-[706px] grid w-[780px] grid-cols-4 gap-[16px]">
+      <div className="absolute left-[88px] top-[468px] grid w-[780px] grid-cols-4 gap-[16px]">
         {subjects.map((subject) => (
           <button
             key={subject}
@@ -306,17 +291,19 @@ function SelectedImagesPanel({
 
 function AiPanel({
   onSubjectSelect,
-  selectedImages,
+  isSubjectPickerOpen,
+  onUserModeChange,
   selectedSubject,
+  userMode,
   onOpenUpload,
 }: {
   onSubjectSelect: (subject: string) => void;
-  selectedImages: SelectedImage[];
+  isSubjectPickerOpen: boolean;
+  onUserModeChange: (mode: SubjectMode) => void;
   selectedSubject: string;
+  userMode: SubjectMode;
   onOpenUpload: () => void;
 }) {
-  const hasSelectedImages = selectedImages.length > 0;
-
   return (
     <aside className="absolute left-[966px] top-0 h-[1200px] w-[954px] rounded-l-[12px] bg-white shadow-[-12px_0_24px_rgba(0,0,0,0.13)]">
       <header className="absolute left-0 top-0 h-[142px] w-full">
@@ -340,19 +327,39 @@ function AiPanel({
         </div>
       </div>
 
-      {hasSelectedImages ? (
-        <SelectedImagesPanel
-          images={selectedImages}
+      <div className="absolute right-[26px] top-[266px] flex h-[46px] rounded-full bg-[#eef0f2] p-[4px]">
+        <button
+          className={`h-[38px] rounded-full px-[18px] text-[18px] leading-none ${
+            userMode === 'single' ? 'bg-white text-[#202124] shadow-sm' : 'text-[#777]'
+          }`}
+          onClick={() => onUserModeChange('single')}
+          type="button"
+        >
+          单学科用户
+        </button>
+        <button
+          className={`h-[38px] rounded-full px-[18px] text-[18px] leading-none ${
+            userMode === 'multiple' ? 'bg-white text-[#202124] shadow-sm' : 'text-[#777]'
+          }`}
+          onClick={() => onUserModeChange('multiple')}
+          type="button"
+        >
+          多学科用户
+        </button>
+      </div>
+
+      {isSubjectPickerOpen ? (
+        <SubjectSelectionPanel
           onSubjectSelect={onSubjectSelect}
           selectedSubject={selectedSubject}
         />
       ) : (
         <>
-          <QuickButton top={279}>帮我布置试卷作业</QuickButton>
-          <QuickButton top={357} onClick={onOpenUpload}>
+          <QuickButton top={334}>帮我布置试卷作业</QuickButton>
+          <QuickButton top={412} onClick={onOpenUpload}>
             帮我识别作业资料
           </QuickButton>
-          <QuickButton top={430}>帮我布置听力作业</QuickButton>
+          <QuickButton top={485}>帮我布置听力作业</QuickButton>
         </>
       )}
 
@@ -993,6 +1000,128 @@ function CaptureSimulator({
   );
 }
 
+function OcrPreviewPage({
+  images,
+  mode,
+  onBack,
+  subject,
+}: {
+  images: SelectedImage[];
+  mode: RecognitionMode | '';
+  onBack: () => void;
+  subject: string;
+}) {
+  const modeLabel =
+    mode === 'questions_only'
+      ? '仅识别题目'
+      : mode === 'same_image_answer'
+        ? '题目+答案｜同图片'
+        : '题目+答案｜不同图片';
+  const questionCount = images.filter((image) => image.role === 'question').length;
+  const answerCount = images.filter((image) => image.role === 'answer').length;
+
+  return (
+    <div className="absolute inset-0 z-30 bg-[#f5f7f8]">
+      <header className="absolute left-0 top-0 h-[96px] w-full border-b border-[#e6e9ec] bg-white">
+        <button
+          aria-label="返回拍摄"
+          className="absolute left-[34px] top-[26px] flex h-[48px] items-center gap-[8px] rounded-[8px] pr-[16px] text-[#202124] active:bg-[#f4f4f4]"
+          onClick={onBack}
+          type="button"
+        >
+          <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
+          <span className="text-[30px] font-normal leading-none">识别作业资料</span>
+        </button>
+        <div className="absolute right-[48px] top-[30px] rounded-full bg-[#eaf7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#31ad76]">
+          {subject}
+        </div>
+      </header>
+
+      <main className="absolute left-0 top-[96px] flex h-[1104px] w-full">
+        <section className="relative h-full w-[770px] border-r border-[#e1e5e8] bg-white">
+          <div className="absolute left-[42px] top-[34px]">
+            <div className="text-[30px] font-semibold leading-none text-[#202124]">待切题资料</div>
+            <div className="mt-[14px] text-[21px] leading-none text-[#737b84]">
+              {modeLabel} · 共 {images.length} 张图片
+              {mode === 'separate_answer' ? ` · 题目 ${questionCount} 张 / 答案 ${answerCount} 张` : ''}
+            </div>
+          </div>
+
+          <div className="absolute left-[42px] top-[124px] grid w-[686px] grid-cols-2 gap-[18px]">
+            {images.slice(0, 6).map((image, index) => (
+              <div
+                key={`${image.url}-${index}`}
+                className="relative h-[168px] rounded-[12px] border border-[#e6eaee] bg-[#f8fafb] p-[12px]"
+              >
+                <img
+                  alt=""
+                  className="h-full w-full rounded-[8px] object-cover"
+                  src={image.url}
+                />
+                <span className={`absolute left-[18px] top-[18px] rounded-[4px] px-[8px] py-[5px] text-[16px] font-medium leading-none text-white ${
+                  image.role === 'answer' ? 'bg-[#6f94f7]' : 'bg-[#10b981]'
+                }`}>
+                  {image.role === 'answer' ? '答案' : '题目'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="relative flex-1 bg-[#f5f7f8]">
+          <div className="absolute left-[68px] top-[54px] text-[32px] font-semibold leading-none text-[#202124]">
+            OCR 切题中
+          </div>
+          <div className="absolute left-[68px] top-[110px] text-[22px] leading-none text-[#7b838c]">
+            已带入学科和识别方式，拍摄完成后直接进入切题环节
+          </div>
+
+          <div className="absolute left-[68px] top-[178px] h-[720px] w-[934px] rounded-[16px] border border-[#e2e7eb] bg-white shadow-[0_10px_32px_rgba(31,44,58,0.08)]">
+            <div className="absolute left-[42px] top-[40px] h-[610px] w-[510px] rounded-[10px] border border-[#dde4ea] bg-[#fbfbfa] p-[26px]">
+              <div className="mb-[24px] h-[20px] w-[270px] rounded-full bg-[#dce3e8]" />
+              {[0, 1, 2].map((index) => (
+                <div
+                  key={index}
+                  className="relative mb-[48px] h-[116px] rounded-[8px] border-2 border-[#58cf9a] bg-[#e8faf5]"
+                >
+                  <span className="absolute -left-[2px] -top-[32px] rounded bg-[#4fc6b1] px-[10px] py-[7px] text-[18px] font-medium leading-none text-white">
+                    题{index + 1}
+                  </span>
+                  <div className="absolute left-[24px] right-[24px] top-[28px] space-y-[14px]">
+                    <div className="h-[14px] rounded-full bg-[#a9ead8]" />
+                    <div className="h-[14px] w-[72%] rounded-full bg-[#a9ead8]" />
+                    <div className="h-[14px] w-[52%] rounded-full bg-[#d6dde3]" />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="absolute right-[42px] top-[62px] h-[560px] w-[280px] rounded-[12px] bg-[#f7faf9] p-[24px]">
+              <div className="text-[24px] font-semibold leading-none text-[#202124]">识别进度</div>
+              <div className="mt-[34px] space-y-[22px]">
+                {['智能切题', '识别题干', mode === 'questions_only' ? '整理题目' : '匹配答案解析'].map((step, index) => (
+                  <div key={step} className="flex items-center gap-[14px]">
+                    <span className="flex h-[28px] w-[28px] items-center justify-center rounded-full bg-[#58cf9a] text-[16px] font-semibold leading-none text-white">
+                      {index + 1}
+                    </span>
+                    <span className="text-[21px] leading-none text-[#3d4650]">{step}</span>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="absolute bottom-[28px] left-[24px] h-[56px] w-[232px] rounded-[8px] bg-[#58cf9a] text-[23px] font-medium leading-none text-white active:bg-[#45bf89]"
+                type="button"
+              >
+                查看切题结果
+              </button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function AddImageDialog({
   onAlbumSelected,
   onCameraOpen,
@@ -1061,12 +1190,15 @@ export function TabletAiEntryPreview() {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isModeDialogOpen, setIsModeDialogOpen] = useState(false);
   const [isCaptureOpen, setIsCaptureOpen] = useState(false);
+  const [isOcrPreviewOpen, setIsOcrPreviewOpen] = useState(false);
+  const [isSubjectPickerOpen, setIsSubjectPickerOpen] = useState(false);
   const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
   const [questionImages, setQuestionImages] = useState<SelectedImage[]>([]);
   const [answerImages, setAnswerImages] = useState<SelectedImage[]>([]);
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedMode, setSelectedMode] = useState<RecognitionMode | ''>('');
   const [captureRole, setCaptureRole] = useState<ImageRole>('question');
+  const [userMode, setUserMode] = useState<SubjectMode>('multiple');
   const selectedImagesRef = useRef(selectedImages);
   const questionImagesRef = useRef(questionImages);
   const answerImagesRef = useRef(answerImages);
@@ -1097,6 +1229,30 @@ export function TabletAiEntryPreview() {
 
   const handleSubjectSelect = (subject: string) => {
     setSelectedSubject(subject);
+    setIsSubjectPickerOpen(false);
+    setIsModeDialogOpen(true);
+  };
+
+  const handleOpenRecognitionFlow = () => {
+    setIsOcrPreviewOpen(false);
+    setIsCaptureOpen(false);
+    setIsModeDialogOpen(false);
+
+    if (userMode === 'single') {
+      setSelectedSubject(SINGLE_SUBJECT);
+      setIsSubjectPickerOpen(false);
+      setIsModeDialogOpen(true);
+      return;
+    }
+
+    setSelectedSubject('');
+    setIsSubjectPickerOpen(true);
+  };
+
+  const handleUserModeChange = (mode: SubjectMode) => {
+    setUserMode(mode);
+    setIsSubjectPickerOpen(false);
+    setSelectedSubject(mode === 'single' ? SINGLE_SUBJECT : '');
   };
 
   const handleModeSelect = (mode: RecognitionMode) => {
@@ -1106,7 +1262,6 @@ export function TabletAiEntryPreview() {
     setSelectedImages([]);
     setQuestionImages([]);
     setAnswerImages([]);
-    setSelectedSubject('');
     setSelectedMode(mode);
     setIsModeDialogOpen(false);
 
@@ -1171,10 +1326,12 @@ export function TabletAiEntryPreview() {
 
       setSelectedImages([...questionImages, ...answerImages]);
       setIsCaptureOpen(false);
+      setIsOcrPreviewOpen(true);
       return;
     }
 
     setIsCaptureOpen(false);
+    setIsOcrPreviewOpen(true);
   };
 
   const currentCaptureImages = getCurrentCaptureImages();
@@ -1186,8 +1343,8 @@ export function TabletAiEntryPreview() {
   const capturePrimaryText = selectedMode === 'separate_answer'
     ? captureRole === 'question'
       ? '下一步：拍答案'
-      : '去选择学科'
-    : '去选择学科';
+      : '去切题'
+    : '去切题';
   const capturePrimaryDisabled = currentCaptureImages.length === 0;
 
   return (
@@ -1209,9 +1366,11 @@ export function TabletAiEntryPreview() {
           <HomeworkPanel />
           <AiPanel
             onSubjectSelect={handleSubjectSelect}
-            onOpenUpload={() => setIsModeDialogOpen(true)}
-            selectedImages={selectedImages}
+            isSubjectPickerOpen={isSubjectPickerOpen}
+            onOpenUpload={handleOpenRecognitionFlow}
+            onUserModeChange={handleUserModeChange}
             selectedSubject={selectedSubject}
+            userMode={userMode}
           />
           {isUploadDialogOpen ? (
             <AddImageDialog
@@ -1240,6 +1399,14 @@ export function TabletAiEntryPreview() {
               primaryText={capturePrimaryText}
               questionCount={questionImages.length}
               title={captureTitle}
+            />
+          ) : null}
+          {isOcrPreviewOpen ? (
+            <OcrPreviewPage
+              images={selectedImages}
+              mode={selectedMode}
+              onBack={() => setIsOcrPreviewOpen(false)}
+              subject={selectedSubject || SINGLE_SUBJECT}
             />
           ) : null}
         </div>
