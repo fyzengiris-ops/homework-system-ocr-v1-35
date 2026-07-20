@@ -410,7 +410,7 @@ const recognitionModes: {
     id: 'separate_answer',
     title: '题目+答案',
     badge: '不同图片',
-    description: '适用于题目资料与答案解析资料分开拍摄的场景',
+    description: '适用于题目与答案解析分开拍摄的资料',
   },
 ];
 
@@ -479,7 +479,7 @@ function ResultPreview({ rich }: { rich: boolean }) {
           {[1, 2, 3].map((index) => (
             <div key={index}>
               <div className="mb-[10px] text-[16px] font-medium leading-none text-[#475569]">
-                题目{index}
+                题{index}
               </div>
               <div className="space-y-[9px]">
                 <DiagramLine width="w-full" />
@@ -496,7 +496,7 @@ function ResultPreview({ rich }: { rich: boolean }) {
     <SourcePageFrame title="识别结果">
       <div className="space-y-[20px] pt-[2px]">
         <div>
-          <div className="mb-[10px] text-[16px] font-medium leading-none text-[#475569]">题目1</div>
+          <div className="mb-[10px] text-[16px] font-medium leading-none text-[#475569]">题1</div>
           <div className="space-y-[9px]">
             <DiagramLine />
             <DiagramLine width="w-[78%]" />
@@ -613,9 +613,9 @@ function QuestionOnlyDiagram() {
   return (
     <div className="grid h-full grid-cols-[1.34fr_0.76fr] gap-[18px]">
       <SourcePageFrame>
-        <QuestionBlock label="题目1" top={42} />
-        <QuestionBlock label="题目2" top={134} />
-        <QuestionBlock label="题目3" top={226} />
+        <QuestionBlock label="题1" top={42} />
+        <QuestionBlock label="题2" top={134} />
+        <QuestionBlock label="题3" top={226} />
       </SourcePageFrame>
       <ResultPreview rich={false} />
     </div>
@@ -626,8 +626,8 @@ function SameFileDiagram() {
   return (
     <div className="grid h-full grid-cols-[1.34fr_0.76fr] gap-[18px]">
       <SourcePageFrame>
-        <AdjacentAnswerBlock label="题目1+答案/解析" top={42} />
-        <AdjacentAnswerBlock label="题目2+答案/解析" top={190} />
+        <AdjacentAnswerBlock label="题1+答案/解析" top={42} />
+        <AdjacentAnswerBlock label="题2+答案/解析" top={190} />
       </SourcePageFrame>
       <ResultPreview rich />
     </div>
@@ -639,14 +639,14 @@ function SeparateFileDiagram() {
     <div className="grid h-full grid-cols-[0.9fr_0.9fr_1.08fr] gap-[14px]">
       <CompactFileFrame title="《试卷题目文件》">
         {[1, 2, 3].map((index, itemIndex) => (
-          <CompactQuestionBlock key={index} label={`题目${index}`} top={72 + itemIndex * 86} />
+          <CompactQuestionBlock key={index} label={`题${index}`} top={72 + itemIndex * 86} />
         ))}
       </CompactFileFrame>
       <CompactFileFrame title="《试卷答案文件》">
         {[1, 2, 3].map((index, itemIndex) => (
           <CompactQuestionBlock
             key={index}
-            label={`题目${index}答案解析`}
+            label={`题${index}答案解析`}
             tone="answer"
             top={72 + itemIndex * 86}
           />
