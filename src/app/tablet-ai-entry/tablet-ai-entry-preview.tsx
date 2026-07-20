@@ -904,8 +904,10 @@ function CaptureSimulator({
         <div className="absolute left-[710px] top-[-70px] h-[260px] w-[360px] rotate-[16deg] rounded-[22px] bg-[#267fcc]/45 blur-[1px]" />
         <CameraGrid />
         <div className="absolute left-[360px] top-[210px] h-[690px] w-[930px] rotate-[-12deg] rounded-[6px] border-[4px] border-[#55d99d] bg-white/8" />
-        <div className="absolute left-[760px] top-[536px] rounded-[10px] bg-black/45 px-[32px] py-[18px] text-[28px] leading-none text-white">
-          保持资料完整清晰
+        <div className="absolute left-1/2 top-[536px] -translate-x-1/2 rounded-[12px] bg-black/40 px-[34px] py-[17px] text-[28px] font-medium leading-none text-white/90">
+          {currentRole
+            ? `当前：拍摄${currentRole === 'question' ? '题目' : '答案'}`
+            : title}
         </div>
 
         <button
@@ -916,10 +918,6 @@ function CaptureSimulator({
         >
           <X className="h-[33px] w-[33px]" />
         </button>
-
-        <div className="absolute left-[120px] top-[44px] rounded-full bg-black/45 px-[26px] py-[14px] text-[25px] font-medium leading-none text-white">
-          {title}
-        </div>
 
         {currentRole ? (
           <div className="absolute left-1/2 top-[42px] flex -translate-x-1/2 gap-[12px] rounded-full bg-black/35 p-[7px]">
