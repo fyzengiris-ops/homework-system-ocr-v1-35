@@ -885,14 +885,7 @@ function CaptureImageManager({
         className="h-[88px] w-[88px] rounded-[8px] object-cover"
         src={image.url}
       />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[21px] leading-none text-[#27313b]">{image.name}</div>
-        <div className={`mt-[14px] w-fit rounded-[5px] px-[9px] py-[6px] text-[16px] font-medium leading-none text-white ${
-          role === 'answer' ? 'bg-[#6f94f7]' : 'bg-[#10b981]'
-        }`}>
-          {role === 'answer' ? '答案图片' : role === 'question' ? '题目图片' : '作业图片'}
-        </div>
-      </div>
+      <div className="min-w-0 flex-1" />
       <div className="flex shrink-0 items-center gap-[10px]">
         {isSeparateMode && role ? (
           <button
@@ -951,8 +944,8 @@ function CaptureImageManager({
           <div className="space-y-[30px]">
             {isSeparateMode ? (
               <>
-                {renderGroup('题目图片', questionImages, 'question')}
-                {renderGroup('答案图片', answerImages, 'answer')}
+                {renderGroup('题目', questionImages, 'question')}
+                {renderGroup('答案', answerImages, 'answer')}
               </>
             ) : (
               renderGroup('作业图片', selectedImages)
