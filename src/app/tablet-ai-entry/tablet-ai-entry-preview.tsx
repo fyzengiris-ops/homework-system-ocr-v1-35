@@ -820,6 +820,12 @@ function revokeImageUrls(images: SelectedImage[]) {
   });
 }
 
+function revokeImageUrl(image: SelectedImage) {
+  if (image.url.startsWith('blob:')) {
+    URL.revokeObjectURL(image.url);
+  }
+}
+
 function appendFilesAsImages(files: File[], role?: ImageRole): SelectedImage[] {
   const rolePrefix = role === 'question' ? '题目' : role === 'answer' ? '答案' : '';
 
@@ -851,35 +857,158 @@ function CameraGrid() {
   );
 }
 
+function CaptureImageManager({
+  answerImages,
+  mode,
+  onClose,
+  onDelete,
+  onMove,
+  questionImages,
+  selectedImages,
+}: {
+  answerImages: SelectedImage[];
+  mode: RecognitionMode | '';
+  onClose: () => void;
+  onDelete: (image: SelectedImage, role?: ImageRole) => void;
+  onMove: (image: SelectedImage, fromRole: ImageRole, toRole: ImageRole) => void;
+  questionImages: SelectedImage[];
+  selectedImages: SelectedImage[];
+}) {
+  const isSeparateMode = mode === 'separate_answer';
+  const renderImageItem = (image: SelectedImage, role?: ImageRole) => (
+    <div
+      key={image.url}
+      className="flex h-[116px] items-center gap-[16px] rounded-[12px] border border-[#e6e9ed] bg-white p-[12px]"
+    >
+      <img
+        alt=""
+        className="h-[88px] w-[88px] rounded-[8px] object-cover"
+        src={image.url}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[21px] leading-none text-[#27313b]">{image.name}</div>
+        <div className={`mt-[14px] w-fit rounded-[5px] px-[9px] py-[6px] text-[16px] font-medium leading-none text-white ${
+          role === 'answer' ? 'bg-[#6f94f7]' : 'bg-[#10b981]'
+        }`}>
+          {role === 'answer' ? '答案图片' : role === 'question' ? '题目图片' : '作业图片'}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-[10px]">
+        {isSeparateMode && role ? (
+          <button
+            className="h-[42px] rounded-[7px] border border-[#d7dde3] bg-white px-[14px] text-[18px] leading-none text-[#4b5563] active:bg-[#f4f6f7]"
+            onClick={() => onMove(image, role, role === 'question' ? 'answer' : 'question')}
+            type="button"
+          >
+            移到{role === 'question' ? '答案' : '题目'}
+          </button>
+        ) : null}
+        <button
+          className="h-[42px] rounded-[7px] bg-[#fff1f1] px-[14px] text-[18px] leading-none text-[#e14c4c] active:bg-[#ffe5e5]"
+          onClick={() => onDelete(image, role)}
+          type="button"
+        >
+          删除
+        </button>
+      </div>
+    </div>
+  );
+  const renderGroup = (title: string, images: SelectedImage[], role?: ImageRole) => (
+    <section>
+      <div className="mb-[14px] flex items-center justify-between">
+        <h3 className="text-[24px] font-semibold leading-none text-[#202124]">{title}</h3>
+        <span className="text-[19px] leading-none text-[#7a838d]">{images.length} 张</span>
+      </div>
+      <div className="grid gap-[12px]">
+        {images.length > 0 ? (
+          images.map((image) => renderImageItem(image, role))
+        ) : (
+          <div className="flex h-[104px] items-center justify-center rounded-[12px] border border-dashed border-[#d7dde3] bg-[#f7f8f9] text-[21px] text-[#8b949e]">
+            暂未添加图片
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
+  return (
+    <div className="absolute inset-0 z-40 bg-black/45">
+      <div className="absolute right-[156px] top-[118px] h-[930px] w-[720px] rounded-[18px] bg-[#f8fafb] shadow-[0_24px_70px_rgba(0,0,0,0.34)]">
+        <header className="absolute left-0 top-0 h-[88px] w-full border-b border-[#e3e7ea] bg-white">
+          <div className="absolute left-[34px] top-[30px] text-[28px] font-semibold leading-none text-[#202124]">
+            已拍图片
+          </div>
+          <button
+            aria-label="关闭图片管理"
+            className="absolute right-[24px] top-[20px] flex h-[48px] w-[48px] items-center justify-center rounded-full text-[#68727d] active:bg-[#f2f4f5]"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="h-[32px] w-[32px]" />
+          </button>
+        </header>
+        <div className="absolute bottom-0 left-0 right-0 top-[88px] overflow-y-auto p-[28px]">
+          <div className="space-y-[30px]">
+            {isSeparateMode ? (
+              <>
+                {renderGroup('题目图片', questionImages, 'question')}
+                {renderGroup('答案图片', answerImages, 'answer')}
+              </>
+            ) : (
+              renderGroup('作业图片', selectedImages)
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CaptureSimulator({
   title,
   currentRole,
   currentImages,
+  mode,
   questionCount,
   answerCount,
+  questionImages,
+  answerImages,
+  selectedImages,
   primaryText,
   primaryDisabled,
   onAlbumSelected,
   onCapture,
   onClose,
+  onDeleteImage,
+  onMoveImage,
   onPrimary,
   onRoleChange,
 }: {
   title: string;
   currentRole?: ImageRole;
   currentImages: SelectedImage[];
+  mode: RecognitionMode | '';
   questionCount: number;
   answerCount: number;
+  questionImages: SelectedImage[];
+  answerImages: SelectedImage[];
+  selectedImages: SelectedImage[];
   primaryText: string;
   primaryDisabled: boolean;
   onAlbumSelected: (files: File[]) => void;
   onCapture: () => void;
   onClose: () => void;
+  onDeleteImage: (image: SelectedImage, role?: ImageRole) => void;
+  onMoveImage: (image: SelectedImage, fromRole: ImageRole, toRole: ImageRole) => void;
   onPrimary: () => void;
   onRoleChange?: (role: ImageRole) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isManagerOpen, setIsManagerOpen] = useState(false);
   const latestImage = currentImages[currentImages.length - 1];
+  const managerImageCount = mode === 'separate_answer'
+    ? questionImages.length + answerImages.length
+    : selectedImages.length;
 
   return (
     <div className="absolute inset-0 z-30 overflow-hidden bg-[#101010]">
@@ -906,7 +1035,7 @@ function CaptureSimulator({
         <div className="absolute left-[360px] top-[210px] h-[690px] w-[930px] rotate-[-12deg] rounded-[6px] border-[4px] border-[#55d99d] bg-white/8" />
         <div className="absolute left-1/2 top-[536px] -translate-x-1/2 rounded-[12px] bg-black/40 px-[34px] py-[17px] text-[28px] font-medium leading-none text-white/90">
           {currentRole
-            ? `当前：拍摄${currentRole === 'question' ? '题目' : '答案'}`
+            ? `拍摄${currentRole === 'question' ? '题目' : '答案'}`
             : title}
         </div>
 
@@ -968,15 +1097,23 @@ function CaptureSimulator({
         />
 
         <div className="absolute bottom-[38px] left-[18px] h-[86px] w-[102px]">
-          {latestImage ? (
-            <img
-              alt=""
-              className="h-[74px] w-[74px] rounded-[9px] border border-white/70 object-cover"
-              src={latestImage.url}
-            />
-          ) : (
-            <div className="h-[74px] w-[74px] rounded-[9px] border border-white/35 bg-black/40" />
-          )}
+          <button
+            aria-label="管理已拍图片"
+            className="relative block h-[74px] w-[74px] rounded-[9px] active:scale-95 disabled:active:scale-100"
+            disabled={managerImageCount === 0}
+            onClick={() => setIsManagerOpen(true)}
+            type="button"
+          >
+            {latestImage ? (
+              <img
+                alt=""
+                className="h-full w-full rounded-[9px] border border-white/70 object-cover"
+                src={latestImage.url}
+              />
+            ) : (
+              <div className="h-full w-full rounded-[9px] border border-white/35 bg-black/40" />
+            )}
+          </button>
           {currentImages.length > 0 ? (
             <span className="absolute right-[15px] top-[-10px] flex h-[30px] min-w-[30px] items-center justify-center rounded-full bg-[#58cf9a] px-[8px] text-[17px] font-medium leading-none text-white">
               {currentImages.length}
@@ -994,6 +1131,17 @@ function CaptureSimulator({
           </button>
         </div>
       </aside>
+      {isManagerOpen ? (
+        <CaptureImageManager
+          answerImages={answerImages}
+          mode={mode}
+          onClose={() => setIsManagerOpen(false)}
+          onDelete={onDeleteImage}
+          onMove={onMoveImage}
+          questionImages={questionImages}
+          selectedImages={selectedImages}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1315,6 +1463,33 @@ export function TabletAiEntryPreview() {
     setSelectedImages((currentImages) => [...currentImages, ...nextImages]);
   };
 
+  const handleDeleteCaptureImage = (image: SelectedImage, role?: ImageRole) => {
+    if (selectedMode === 'separate_answer' && role) {
+      const updater = role === 'question' ? setQuestionImages : setAnswerImages;
+      updater((currentImages) => currentImages.filter((currentImage) => currentImage.url !== image.url));
+      revokeImageUrl(image);
+      return;
+    }
+
+    setSelectedImages((currentImages) => currentImages.filter((currentImage) => currentImage.url !== image.url));
+    revokeImageUrl(image);
+  };
+
+  const handleMoveCaptureImage = (image: SelectedImage, fromRole: ImageRole, toRole: ImageRole) => {
+    const fromUpdater = fromRole === 'question' ? setQuestionImages : setAnswerImages;
+    const toUpdater = toRole === 'question' ? setQuestionImages : setAnswerImages;
+
+    fromUpdater((currentImages) => currentImages.filter((currentImage) => currentImage.url !== image.url));
+    toUpdater((currentImages) => [
+      ...currentImages,
+      {
+        ...image,
+        name: image.name.replace(/^题目_/, '').replace(/^答案_/, ''),
+        role: toRole,
+      },
+    ]);
+  };
+
   const handleCapturePrimary = () => {
     if (selectedMode === 'separate_answer') {
       if (captureRole === 'question') {
@@ -1386,16 +1561,22 @@ export function TabletAiEntryPreview() {
           {isCaptureOpen ? (
             <CaptureSimulator
               answerCount={answerImages.length}
+              answerImages={answerImages}
               currentImages={currentCaptureImages}
               currentRole={selectedMode === 'separate_answer' ? captureRole : undefined}
+              mode={selectedMode}
               onAlbumSelected={handleCaptureAlbumSelected}
               onCapture={handleCapture}
               onClose={() => setIsCaptureOpen(false)}
+              onDeleteImage={handleDeleteCaptureImage}
+              onMoveImage={handleMoveCaptureImage}
               onPrimary={handleCapturePrimary}
               onRoleChange={setCaptureRole}
               primaryDisabled={capturePrimaryDisabled}
               primaryText={capturePrimaryText}
               questionCount={questionImages.length}
+              questionImages={questionImages}
+              selectedImages={selectedImages}
               title={captureTitle}
             />
           ) : null}
