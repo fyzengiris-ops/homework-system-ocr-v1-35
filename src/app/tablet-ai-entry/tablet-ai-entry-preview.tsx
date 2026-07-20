@@ -1115,11 +1115,9 @@ export function TabletAiEntryPreview() {
 
     if (mode === 'separate_answer') {
       setCaptureRole('question');
-      setIsCaptureOpen(true);
-      return;
     }
 
-    setIsUploadDialogOpen(true);
+    setIsCaptureOpen(true);
   };
 
   const handleOpenCamera = () => {
