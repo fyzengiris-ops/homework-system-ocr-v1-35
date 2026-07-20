@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   Camera,
   ChevronLeft,
@@ -30,6 +31,25 @@ type SelectedImage = {
 type RecognitionMode = 'questions_only' | 'same_image_answer' | 'separate_answer';
 type ImageRole = 'question' | 'answer';
 type SubjectMode = 'single' | 'multiple';
+type OcrDetectStatus = 'loading' | 'ready' | 'failed';
+
+type MaterialPage = SelectedImage & {
+  pageNumber: number;
+  naturalWidth: number;
+  naturalHeight: number;
+  imageData: string;
+};
+
+type RecognitionBox = {
+  id: string;
+  pageNumber: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  selected: boolean;
+  source: 'system' | 'manual';
+};
 
 const SINGLE_SUBJECT = '高中数学';
 
@@ -836,6 +856,142 @@ function appendFilesAsImages(files: File[], role?: ImageRole): SelectedImage[] {
   }));
 }
 
+function getStepThreeModeLabel(mode: RecognitionMode | '') {
+  if (mode === 'questions_only') return '仅识别题目';
+  if (mode === 'same_image_answer') return '题目+答案 · 同图片';
+  if (mode === 'separate_answer') return '题目+答案 · 不同图片';
+  return '识别作业资料';
+}
+
+function getStepThreeModeTip(mode: RecognitionMode | '') {
+  if (mode === 'questions_only') return '只框选题目内容，答案解析不参与处理';
+  if (mode === 'same_image_answer') return '只框选题目内容，答案解析后续自动匹配';
+  if (mode === 'separate_answer') return '只对题目图片切题，答案图片后续参与答案解析匹配';
+  return '请在左侧资料上选择需要识别的内容';
+}
+
+function clampPercent(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function readBlobAsDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function loadImageSize(url: string) {
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth || 1, height: image.naturalHeight || 1 });
+    image.onerror = () => reject(new Error('image load failed'));
+    image.src = url;
+  });
+}
+
+async function prepareMaterialPages(images: SelectedImage[]) {
+  const pages: MaterialPage[] = [];
+
+  for (let index = 0; index < images.length; index += 1) {
+    const image = images[index];
+    const [{ width, height }, blob] = await Promise.all([
+      loadImageSize(image.url),
+      fetch(image.url).then((response) => response.blob()),
+    ]);
+    const imageData = await readBlobAsDataUrl(blob);
+
+    pages.push({
+      ...image,
+      pageNumber: index + 1,
+      naturalWidth: width,
+      naturalHeight: height,
+      imageData,
+    });
+  }
+
+  return pages;
+}
+
+async function detectMaterialBoxes(pages: MaterialPage[]) {
+  const response = await fetch('/api/auto-detect-boxes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pages: pages.map((page) => ({
+        pageNumber: page.pageNumber,
+        imageData: page.imageData,
+        width: page.naturalWidth,
+        height: page.naturalHeight,
+      })),
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || 'auto detect failed');
+  }
+
+  if (!response.body) {
+    throw new Error('auto detect response is empty');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const events = buffer.split('\n\n');
+    buffer = events.pop() || '';
+
+    for (const eventText of events) {
+      const dataLine = eventText.split('\n').find((line) => line.startsWith('data:'));
+      if (!dataLine) continue;
+
+      const event = JSON.parse(dataLine.replace(/^data:\s*/, '')) as {
+        type?: string;
+        data?: {
+          error?: string;
+          result?: {
+            boxes?: Array<{
+              pageNumber?: number;
+              x?: number;
+              y?: number;
+              width?: number;
+              height?: number;
+            }>;
+          };
+        };
+      };
+
+      if (event.type === 'error') {
+        throw new Error(event.data?.error || 'auto detect failed');
+      }
+
+      if (event.type === 'complete') {
+        return (event.data?.result?.boxes || []).map((box, index) => ({
+          id: `system-${box.pageNumber || 1}-${index}-${Date.now()}`,
+          pageNumber: box.pageNumber || 1,
+          x: clampPercent(Number(box.x || 0), 0, 96),
+          y: clampPercent(Number(box.y || 0), 0, 96),
+          width: clampPercent(Number(box.width || 0), 4, 100),
+          height: clampPercent(Number(box.height || 0), 4, 100),
+          selected: true,
+          source: 'system' as const,
+        }));
+      }
+    }
+
+    if (done) break;
+  }
+
+  return [];
+}
+
 function CameraGrid() {
   return (
     <>
@@ -1261,6 +1417,427 @@ function OcrPreviewPage({
   );
 }
 
+function StepThreeGuide({ mode }: { mode: RecognitionMode | '' }) {
+  const isSameImage = mode === 'same_image_answer';
+  const isSeparate = mode === 'separate_answer';
+
+  return (
+    <div className="relative h-[420px] w-[660px] rounded-[18px] border border-dashed border-[#d8dee5] bg-white shadow-[0_16px_42px_rgba(31,44,58,0.08)]">
+      <div className="absolute left-[48px] top-[42px] flex h-[304px] w-[276px] flex-col gap-[18px] rounded-[12px] border border-[#e2e8ee] bg-[#fbfdfc] p-[22px]">
+        <div className="text-center text-[22px] font-medium text-[#5b6672]">资料页</div>
+        {[1, 2, 3].map((item) => (
+          <div
+            key={item}
+            className={`relative h-[74px] rounded-[7px] border ${
+              item === 1 && !isSeparate ? 'border-[#39c8b8] bg-[#e4f8f4]' : 'border-[#edf0f3] bg-[#f4f5f6]'
+            }`}
+          >
+            <span className="absolute -left-px -top-[24px] rounded bg-[#4fc6b1] px-[9px] py-[5px] text-[16px] leading-none text-white">
+              题{item}
+            </span>
+            {isSameImage ? (
+              <div className="absolute left-[20px] right-[20px] bottom-[12px] h-[10px] rounded-full bg-[#b8cdfb]" />
+            ) : null}
+            {isSeparate ? (
+              <div className="absolute inset-x-[20px] top-[26px] h-[10px] rounded-full bg-[#9fe8d5]" />
+            ) : (
+              <div className="absolute inset-x-[20px] top-[22px] h-[10px] rounded-full bg-[#9fe8d5]" />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {isSeparate ? (
+        <div className="absolute left-[344px] top-[42px] flex h-[304px] w-[138px] flex-col gap-[18px] rounded-[12px] border border-[#e2e8ee] bg-[#fbfdfc] p-[22px]">
+          <div className="text-center text-[21px] font-medium text-[#5b6672]">答案页</div>
+          {[1, 2, 3].map((item) => (
+            <div key={item} className="h-[74px] rounded-[7px] border border-[#c8d8ff] bg-[#eef4ff]">
+              <span className="ml-[12px] mt-[10px] inline-block rounded bg-[#6f94f7] px-[8px] py-[5px] text-[15px] leading-none text-white">
+                题{item}答案
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="absolute right-[42px] top-[42px] h-[304px] w-[148px] rounded-[12px] border border-[#e2e8ee] bg-[#fbfdfc] p-[20px]">
+        <div className="text-center text-[21px] font-medium text-[#202124]">识别结果</div>
+        <div className="mt-[34px] space-y-[18px]">
+          <div className="h-[10px] rounded-full bg-[#9fe8d5]" />
+          <div className="h-[10px] w-[72%] rounded-full bg-[#9fe8d5]" />
+          {mode !== 'questions_only' ? (
+            <>
+              <div className="mt-[28px] h-[10px] rounded-full bg-[#b8cdfb]" />
+              <div className="h-[10px] w-[62%] rounded-full bg-[#b8cdfb]" />
+            </>
+          ) : null}
+        </div>
+      </div>
+      <div className="absolute bottom-[28px] left-1/2 -translate-x-1/2 rounded-full bg-[#23bfb2] px-[28px] py-[12px] text-[20px] font-medium leading-none text-white">
+        左侧框选题目并选中后，点击「开始识别」
+      </div>
+    </div>
+  );
+}
+
+function TabletOcrContentSelectionPage({
+  images,
+  mode,
+  onBack,
+  onReplace,
+  onSupplement,
+  subject,
+}: {
+  images: SelectedImage[];
+  mode: RecognitionMode | '';
+  onBack: () => void;
+  onReplace: () => void;
+  onSupplement: () => void;
+  subject: string;
+}) {
+  const [status, setStatus] = useState<OcrDetectStatus>('loading');
+  const [materialPages, setMaterialPages] = useState<MaterialPage[]>([]);
+  const [activePageNumber, setActivePageNumber] = useState(1);
+  const [boxes, setBoxes] = useState<RecognitionBox[]>([]);
+  const [dragState, setDragState] = useState<{
+    id: string;
+    action: 'move' | 'resize';
+    startClientX: number;
+    startClientY: number;
+    startBox: RecognitionBox;
+    containerRect: DOMRect;
+  } | null>(null);
+  const [hasStarted, setHasStarted] = useState(false);
+  const imageWrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function runDetect() {
+      setStatus('loading');
+      setBoxes([]);
+      setHasStarted(false);
+
+      try {
+        const imagesForCut = mode === 'separate_answer'
+          ? images.filter((image) => image.role !== 'answer')
+          : images;
+
+        const pages = await prepareMaterialPages(imagesForCut);
+        if (cancelled) return;
+
+        setMaterialPages(pages);
+        setActivePageNumber(pages[0]?.pageNumber || 1);
+
+        if (pages.length === 0) {
+          setStatus('failed');
+          return;
+        }
+
+        const detectedBoxes = await detectMaterialBoxes(pages);
+        if (cancelled) return;
+
+        setBoxes(detectedBoxes);
+        setStatus(detectedBoxes.length > 0 ? 'ready' : 'failed');
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[TabletOCR] auto detect failed:', error);
+          setStatus('failed');
+        }
+      }
+    }
+
+    runDetect();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [images, mode]);
+
+  useEffect(() => {
+    if (!dragState) return undefined;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dx = ((event.clientX - dragState.startClientX) / dragState.containerRect.width) * 100;
+      const dy = ((event.clientY - dragState.startClientY) / dragState.containerRect.height) * 100;
+
+      setBoxes((currentBoxes) => currentBoxes.map((box) => {
+        if (box.id !== dragState.id) return box;
+
+        if (dragState.action === 'move') {
+          return {
+            ...box,
+            x: clampPercent(dragState.startBox.x + dx, 0, 100 - dragState.startBox.width),
+            y: clampPercent(dragState.startBox.y + dy, 0, 100 - dragState.startBox.height),
+          };
+        }
+
+        return {
+          ...box,
+          width: clampPercent(dragState.startBox.width + dx, 5, 100 - dragState.startBox.x),
+          height: clampPercent(dragState.startBox.height + dy, 5, 100 - dragState.startBox.y),
+        };
+      }));
+    };
+
+    const handlePointerUp = () => setDragState(null);
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [dragState]);
+
+  const activePage = materialPages.find((page) => page.pageNumber === activePageNumber) || materialPages[0];
+  const activeBoxes = boxes.filter((box) => box.pageNumber === (activePage?.pageNumber || 1));
+  const selectedCount = boxes.filter((box) => box.selected).length;
+  const imageFrame = activePage
+    ? (() => {
+        const maxWidth = 890;
+        const maxHeight = 830;
+        const scale = Math.min(maxWidth / activePage.naturalWidth, maxHeight / activePage.naturalHeight);
+        return {
+          width: activePage.naturalWidth * scale,
+          height: activePage.naturalHeight * scale,
+        };
+      })()
+    : { width: 760, height: 830 };
+
+  const addManualBox = () => {
+    const pageNumber = activePage?.pageNumber || 1;
+    const samePageCount = boxes.filter((box) => box.pageNumber === pageNumber).length;
+
+    setBoxes((currentBoxes) => [
+      ...currentBoxes,
+      {
+        id: `manual-${Date.now()}`,
+        pageNumber,
+        x: 10,
+        y: clampPercent(10 + samePageCount * 8, 4, 74),
+        width: 72,
+        height: 12,
+        selected: true,
+        source: 'manual',
+      },
+    ]);
+    setStatus('ready');
+  };
+
+  const startBoxDrag = (
+    event: ReactPointerEvent,
+    box: RecognitionBox,
+    action: 'move' | 'resize',
+  ) => {
+    const containerRect = imageWrapRef.current?.getBoundingClientRect();
+    if (!containerRect) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDragState({
+      id: box.id,
+      action,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startBox: box,
+      containerRect,
+    });
+  };
+
+  const toggleBox = (boxId: string) => {
+    setBoxes((currentBoxes) => currentBoxes.map((box) => (
+      box.id === boxId ? { ...box, selected: !box.selected } : box
+    )));
+  };
+
+  const deleteBox = (boxId: string) => {
+    setBoxes((currentBoxes) => currentBoxes.filter((box) => box.id !== boxId));
+  };
+
+  return (
+    <div className="absolute inset-0 z-30 bg-[#eef2f5]">
+      <header className="absolute left-0 top-0 h-[88px] w-full border-b border-[#e3e7eb] bg-white">
+        <button
+          aria-label="返回"
+          className="absolute left-[28px] top-[20px] flex h-[50px] items-center gap-[6px] rounded-[8px] pr-[16px] text-[#202124] active:bg-[#f3f5f6]"
+          onClick={onBack}
+          type="button"
+        >
+          <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
+          <span className="text-[28px] font-semibold leading-none">识别作业资料</span>
+        </button>
+        <div className="absolute left-[326px] top-[29px] text-[21px] leading-none text-[#7b858f]">
+          {getStepThreeModeLabel(mode)}
+        </div>
+        <div className="absolute right-[40px] top-[24px] rounded-full bg-[#e7f7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#2fac76]">
+          {subject}
+        </div>
+      </header>
+
+      <div className="absolute left-0 top-[88px] h-[76px] w-full border-b border-[#e2e7eb] bg-white">
+        <div className="absolute left-[34px] top-[15px] flex items-center gap-[14px]">
+          <button className="h-[46px] rounded-[8px] border border-[#d7dde3] bg-white px-[20px] text-[20px] text-[#3f4852] active:bg-[#f4f6f7]" onClick={onReplace} type="button">
+            更换资料
+          </button>
+          <button className="h-[46px] rounded-[8px] border border-[#d7dde3] bg-white px-[20px] text-[20px] text-[#3f4852] active:bg-[#f4f6f7]" onClick={onSupplement} type="button">
+            补充资料
+          </button>
+          <button className="h-[46px] rounded-[8px] border border-[#23bfb2] bg-white px-[20px] text-[20px] font-medium text-[#12a99d] active:bg-[#effcf9]" onClick={addManualBox} type="button">
+            添加识别框
+          </button>
+          <button
+            className="h-[46px] rounded-[8px] border border-[#d7dde3] bg-white px-[20px] text-[20px] text-[#3f4852] active:bg-[#f4f6f7] disabled:text-[#b8c0c8]"
+            disabled={boxes.length === 0}
+            onClick={() => setBoxes([])}
+            type="button"
+          >
+            清空
+          </button>
+        </div>
+        <div className="absolute right-[34px] top-[15px] flex items-center gap-[18px]">
+          <span className="text-[20px] leading-none text-[#68727d]">
+            已选中{selectedCount}题/已框选{boxes.length}题
+          </span>
+          <button
+            className="h-[46px] rounded-[8px] bg-[#23bfb2] px-[28px] text-[21px] font-medium leading-none text-white active:bg-[#12a99d] disabled:bg-[#cfd7dd]"
+            disabled={selectedCount === 0}
+            onClick={() => setHasStarted(true)}
+            type="button"
+          >
+            开始识别
+          </button>
+        </div>
+      </div>
+
+      <main className="absolute bottom-0 left-0 right-0 top-[164px] flex">
+        <section className="relative h-full w-[1040px] border-r border-[#dfe5ea] bg-[#f8fafb]">
+          {status === 'loading' ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#9fa4a6]">
+              <img alt="" className="h-[204px] w-[342px] object-contain" src="/tablet-ocr-loading.png" />
+              <div className="mt-[28px] text-[23px] leading-none text-white">正在处理文件信息</div>
+            </div>
+          ) : activePage ? (
+            <div className="absolute inset-0 overflow-auto">
+              <div className="absolute left-[28px] top-[22px] flex items-center gap-[12px]">
+                {materialPages.map((page) => (
+                  <button
+                    key={page.pageNumber}
+                    className={`h-[42px] rounded-[7px] px-[18px] text-[19px] leading-none ${
+                      activePageNumber === page.pageNumber ? 'bg-[#202124] text-white' : 'bg-white text-[#5b6672]'
+                    }`}
+                    onClick={() => setActivePageNumber(page.pageNumber)}
+                    type="button"
+                  >
+                    第{page.pageNumber}页
+                  </button>
+                ))}
+              </div>
+              <div
+                className="absolute left-1/2 top-[82px] -translate-x-1/2 bg-white shadow-[0_8px_28px_rgba(31,44,58,0.12)]"
+                ref={imageWrapRef}
+                style={{ width: imageFrame.width, height: imageFrame.height }}
+              >
+                <img alt="" className="h-full w-full object-fill" src={activePage.url} />
+                {activeBoxes.map((box) => (
+                  <div
+                    key={box.id}
+                    className={`absolute border-2 ${
+                      box.selected
+                        ? 'border-[#26c9bc] bg-[#ddf8f4]/75'
+                        : 'border-[#9ba6b0] bg-white/30'
+                    }`}
+                    onPointerDown={(event) => startBoxDrag(event, box, 'move')}
+                    style={{
+                      left: `${box.x}%`,
+                      top: `${box.y}%`,
+                      width: `${box.width}%`,
+                      height: `${box.height}%`,
+                    }}
+                  >
+                    <button
+                      aria-label={box.selected ? '取消选中识别框' : '选中识别框'}
+                      className={`absolute left-[8px] top-[8px] flex h-[28px] w-[28px] items-center justify-center rounded-[4px] text-[18px] font-semibold leading-none text-white ${
+                        box.selected ? 'bg-[#26c9bc]' : 'bg-[#9ba6b0]'
+                      }`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleBox(box.id);
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      type="button"
+                    >
+                      ✓
+                    </button>
+                    <button
+                      aria-label="删除识别框"
+                      className="absolute right-[8px] top-[8px] flex h-[28px] w-[28px] items-center justify-center rounded-full bg-[#202124] text-white active:bg-[#000]"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        deleteBox(box.id);
+                      }}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      type="button"
+                    >
+                      <X className="h-[19px] w-[19px]" />
+                    </button>
+                    <button
+                      aria-label="调整识别框大小"
+                      className="absolute bottom-[-10px] right-[-10px] h-[24px] w-[24px] rounded-full border-[3px] border-white bg-[#26c9bc] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
+                      onPointerDown={(event) => startBoxDrag(event, box, 'resize')}
+                      type="button"
+                    />
+                  </div>
+                ))}
+                {activeBoxes.length === 0 ? (
+                  <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-[16px] bg-white/92 px-[42px] py-[34px] shadow-[0_12px_34px_rgba(31,44,58,0.16)]">
+                    <div className="text-[24px] font-medium leading-none text-[#202124]">未识别到题目框</div>
+                    <button
+                      className="mt-[22px] h-[46px] rounded-[8px] bg-[#23bfb2] px-[24px] text-[20px] font-medium leading-none text-white active:bg-[#12a99d]"
+                      onClick={addManualBox}
+                      type="button"
+                    >
+                      添加识别框
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <div className="text-[25px] font-medium text-[#202124]">暂无可识别图片</div>
+              <button className="mt-[24px] h-[48px] rounded-[8px] bg-[#23bfb2] px-[26px] text-[21px] text-white" onClick={onSupplement} type="button">
+                补充资料
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="relative flex-1 bg-[#eef2f5]">
+          <div className="absolute left-[58px] top-[48px]">
+            <div className="text-[31px] font-semibold leading-none text-[#202124]">选择识别内容</div>
+            <div className="mt-[16px] text-[21px] leading-none text-[#75808a]">{getStepThreeModeTip(mode)}</div>
+          </div>
+          <div className="absolute left-1/2 top-[184px] -translate-x-1/2">
+            <StepThreeGuide mode={mode} />
+          </div>
+          {status === 'failed' ? (
+            <div className="absolute left-1/2 top-[648px] -translate-x-1/2 rounded-full bg-[#fff8e8] px-[28px] py-[13px] text-[20px] leading-none text-[#b97412]">
+              自动切题未完成，可在左侧手动添加识别框
+            </div>
+          ) : null}
+          {hasStarted ? (
+            <div className="absolute bottom-[52px] left-1/2 -translate-x-1/2 rounded-full bg-[#202124] px-[30px] py-[15px] text-[21px] leading-none text-white shadow-[0_10px_28px_rgba(31,44,58,0.2)]">
+              已进入识别处理，核对结果页面待继续设计
+            </div>
+          ) : null}
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function AddImageDialog({
   onAlbumSelected,
   onCameraOpen,
@@ -1500,6 +2077,24 @@ export function TabletAiEntryPreview() {
     setIsOcrPreviewOpen(true);
   };
 
+  const handleReplaceMaterials = () => {
+    revokeImageUrls(selectedImages);
+    revokeImageUrls(questionImages);
+    revokeImageUrls(answerImages);
+    setSelectedImages([]);
+    setQuestionImages([]);
+    setAnswerImages([]);
+    setIsOcrPreviewOpen(false);
+    setIsCaptureOpen(false);
+    setIsModeDialogOpen(true);
+  };
+
+  const handleSupplementMaterials = () => {
+    setIsOcrPreviewOpen(false);
+    setCaptureRole('question');
+    setIsCaptureOpen(true);
+  };
+
   const currentCaptureImages = getCurrentCaptureImages();
   const captureTitle = selectedMode === 'separate_answer'
     ? captureRole === 'question'
@@ -1574,10 +2169,12 @@ export function TabletAiEntryPreview() {
             />
           ) : null}
           {isOcrPreviewOpen ? (
-            <OcrPreviewPage
+            <TabletOcrContentSelectionPage
               images={selectedImages}
               mode={selectedMode}
               onBack={() => setIsOcrPreviewOpen(false)}
+              onReplace={handleReplaceMaterials}
+              onSupplement={handleSupplementMaterials}
               subject={selectedSubject || SINGLE_SUBJECT}
             />
           ) : null}
