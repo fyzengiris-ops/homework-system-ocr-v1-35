@@ -119,27 +119,12 @@ interface QuestionInfo {
 function calculateBoundingBoxFromElements(
   resultList: ResultList[],
 ): { x: number; y: number; width: number; height: number } | null {
-  // 策略1：优先使用 ResultList 级别的 Coord（整体题目区域坐标）
-  for (const rl of resultList) {
-    if (!rl.Coord || rl.Coord.length === 0) continue;
-    const coord = rl.Coord[0];
-    const lt = coord.LeftTop, rb = coord.RightBottom;
-    if (lt?.X !== undefined && lt?.Y !== undefined && rb?.X !== undefined && rb?.Y !== undefined) {
-      return {
-        x: lt.X,
-        y: lt.Y,
-        width: rb.X - lt.X,
-        height: rb.Y - lt.Y,
-      };
-    }
-  }
-
-  // 策略2：从各字段元素的 Coord 中聚合
+  // 优先从题目字段聚合边界，不把 Answer/Parse 纳入自动框。
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   let foundAny = false;
 
   const allFields: Array<Array<OCRElement> | undefined> = [
-    ...resultList.flatMap(r => [r.Question, r.Option, r.Figure, r.Table, r.Answer, r.Parse]),
+    ...resultList.flatMap(r => [r.Question, r.Option, r.Figure, r.Table]),
   ];
 
   for (const field of allFields) {
