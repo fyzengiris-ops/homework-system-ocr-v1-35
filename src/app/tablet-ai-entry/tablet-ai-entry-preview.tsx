@@ -54,6 +54,8 @@ type RecognitionBox = {
   source: 'system' | 'manual';
 };
 
+type TabletConfirmAction = 'replace' | 'clear' | null;
+
 const SINGLE_SUBJECT = '高中数学';
 
 const assignments = [
@@ -1511,6 +1513,55 @@ function StepThreeGuide({ mode }: { mode: RecognitionMode | '' }) {
   );
 }
 
+function TabletConfirmDialog({
+  action,
+  boxCount,
+  onCancel,
+  onConfirm,
+}: {
+  action: TabletConfirmAction;
+  boxCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!action) return null;
+
+  const isClear = action === 'clear';
+
+  return (
+    <div className="absolute inset-0 z-50 bg-black/45">
+      <section className="absolute left-1/2 top-1/2 h-[302px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-[18px] bg-white shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
+        <div className="absolute left-[40px] right-[40px] top-[42px]">
+          <h3 className="text-[28px] font-semibold leading-none text-[#202124]">
+            {isClear ? '确认清空所有切题框？' : '确认更换资料吗？'}
+          </h3>
+          <p className="mt-[24px] text-[21px] leading-[32px] text-[#68727d]">
+            {isClear
+              ? `将删除当前可见的 ${boxCount} 个切题框，此操作不可撤销。`
+              : '更换资料，将清空当前已识别的内容，并且需要重新选择识别方式。'}
+          </p>
+        </div>
+        <div className="absolute bottom-[30px] right-[32px] flex gap-[16px]">
+          <button
+            className="h-[48px] rounded-[8px] border border-[#d7dde3] bg-white px-[28px] text-[21px] leading-none text-[#3f4852] active:bg-[#f4f6f7]"
+            onClick={onCancel}
+            type="button"
+          >
+            取消
+          </button>
+          <button
+            className="h-[48px] rounded-[8px] bg-[#e45454] px-[28px] text-[21px] font-medium leading-none text-white active:bg-[#d84242]"
+            onClick={onConfirm}
+            type="button"
+          >
+            {isClear ? '确认清空' : '确认'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TabletOcrContentSelectionPage({
   images,
   mode,
@@ -1539,6 +1590,7 @@ function TabletOcrContentSelectionPage({
     containerRect: DOMRect;
   } | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<TabletConfirmAction>(null);
   const imageWrapRef = useRef<HTMLDivElement>(null);
   const hasMovedBoxRef = useRef(false);
 
@@ -1695,6 +1747,38 @@ function TabletOcrContentSelectionPage({
     setBoxes((currentBoxes) => currentBoxes.filter((box) => box.id !== boxId));
   };
 
+  const handleReplaceClick = () => {
+    if (boxes.length > 0) {
+      setConfirmAction('replace');
+      return;
+    }
+
+    onReplace();
+  };
+
+  const handleClearClick = () => {
+    if (boxes.length > 0) {
+      setConfirmAction('clear');
+      return;
+    }
+
+    setBoxes([]);
+  };
+
+  const handleConfirmAction = () => {
+    const action = confirmAction;
+    setConfirmAction(null);
+
+    if (action === 'replace') {
+      onReplace();
+      return;
+    }
+
+    if (action === 'clear') {
+      setBoxes([]);
+    }
+  };
+
   return (
     <div className="absolute inset-0 z-30 bg-[#eef2f5]">
       <header className="absolute left-0 top-0 h-[88px] w-full border-b border-[#e3e7eb] bg-white">
@@ -1714,7 +1798,7 @@ function TabletOcrContentSelectionPage({
 
       <div className="absolute left-0 top-[88px] h-[76px] w-full border-b border-[#e2e7eb] bg-white">
         <div className="absolute left-[34px] top-[15px] flex items-center gap-[14px]">
-          <button className="h-[46px] rounded-[8px] border border-[#d7dde3] bg-white px-[20px] text-[20px] text-[#3f4852] active:bg-[#f4f6f7]" onClick={onReplace} type="button">
+          <button className="h-[46px] rounded-[8px] border border-[#d7dde3] bg-white px-[20px] text-[20px] text-[#3f4852] active:bg-[#f4f6f7]" onClick={handleReplaceClick} type="button">
             更换资料
           </button>
           <button className="h-[46px] rounded-[8px] border border-[#d7dde3] bg-white px-[20px] text-[20px] text-[#3f4852] active:bg-[#f4f6f7]" onClick={onSupplement} type="button">
@@ -1726,7 +1810,7 @@ function TabletOcrContentSelectionPage({
           <button
             className="h-[46px] rounded-[8px] border border-[#d7dde3] bg-white px-[20px] text-[20px] text-[#3f4852] active:bg-[#f4f6f7] disabled:text-[#b8c0c8]"
             disabled={boxes.length === 0}
-            onClick={() => setBoxes([])}
+            onClick={handleClearClick}
             type="button"
           >
             清空
@@ -1872,6 +1956,12 @@ function TabletOcrContentSelectionPage({
           ) : null}
         </section>
       </main>
+      <TabletConfirmDialog
+        action={confirmAction}
+        boxCount={boxes.length}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={handleConfirmAction}
+      />
     </div>
   );
 }
