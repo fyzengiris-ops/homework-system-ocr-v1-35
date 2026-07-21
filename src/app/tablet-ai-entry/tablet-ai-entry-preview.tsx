@@ -1529,8 +1529,8 @@ function TabletConfirmDialog({
   return (
     <div className="absolute inset-0 z-50 bg-black/45">
       <section className="absolute left-1/2 top-1/2 h-[302px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-[18px] bg-white shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
-        <div className="absolute left-[40px] right-[40px] top-[42px]">
-          <h3 className="text-[28px] font-semibold leading-none text-[#202124]">
+        <div className={`absolute left-[40px] right-[40px] ${isClear ? 'top-1/2 -translate-y-1/2' : 'top-[42px]'}`}>
+          <h3 className={`text-[28px] font-semibold leading-none text-[#202124] ${isClear ? 'text-center' : ''}`}>
             {isClear ? '确认清空所有切题框？' : '确认更换资料吗？'}
           </h3>
           {!isClear ? (
@@ -1821,14 +1821,16 @@ function TabletOcrContentSelectionPage({
         </div>
       </div>
 
-      <button
-        className="absolute left-[996px] top-[560px] z-20 flex h-[88px] w-[88px] items-center justify-center rounded-full bg-[#23bfb2] text-center text-[20px] font-medium leading-[23px] text-white shadow-[0_12px_26px_rgba(35,191,178,0.36)] active:bg-[#12a99d] disabled:bg-[#cfd7dd] disabled:shadow-none"
-        disabled={selectedCount === 0}
-        onClick={() => setHasStarted(true)}
-        type="button"
-      >
-        开始<br />识别
-      </button>
+      {status !== 'loading' && activePage ? (
+        <button
+          className="absolute left-[996px] top-[560px] z-20 flex h-[88px] w-[88px] items-center justify-center rounded-full bg-[#23bfb2] text-center text-[20px] font-medium leading-[23px] text-white shadow-[0_12px_26px_rgba(35,191,178,0.36)] active:bg-[#12a99d] disabled:bg-[#cfd7dd] disabled:shadow-none"
+          disabled={selectedCount === 0}
+          onClick={() => setHasStarted(true)}
+          type="button"
+        >
+          开始<br />识别
+        </button>
+      ) : null}
 
       <main className="absolute bottom-0 left-0 right-0 top-[164px] flex">
         <section className="relative h-full w-[1040px] border-r border-[#dfe5ea] bg-[#f8fafb]">
