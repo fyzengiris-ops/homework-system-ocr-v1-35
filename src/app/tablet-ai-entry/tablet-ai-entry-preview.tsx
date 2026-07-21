@@ -979,7 +979,7 @@ async function detectMaterialBoxes(pages: MaterialPage[]) {
           x: clampPercent(Number(box.x || 0), 0, 96),
           y: clampPercent(Number(box.y || 0), 0, 96),
           width: clampPercent(Number(box.width || 0), 4, 100),
-          height: clampPercent(Number(box.height || 0), 4, 100),
+          height: clampPercent(Number(box.height || 0), 3, 100),
           selected: true,
           source: 'system' as const,
         }));
@@ -1473,7 +1473,7 @@ function StepThreeGuide({ mode }: { mode: RecognitionMode | '' }) {
           ) : null}
         </div>
       </div>
-      <div className="absolute bottom-[28px] left-1/2 -translate-x-1/2 rounded-full bg-[#23bfb2] px-[28px] py-[12px] text-[20px] font-medium leading-none text-white">
+      <div className="absolute bottom-[28px] left-1/2 w-[560px] -translate-x-1/2 whitespace-nowrap rounded-full bg-[#23bfb2] px-[28px] py-[12px] text-center text-[20px] font-medium leading-none text-white">
         左侧框选题目并选中后，点击「开始识别」
       </div>
     </div>
@@ -1575,7 +1575,7 @@ function TabletOcrContentSelectionPage({
         return {
           ...box,
           width: clampPercent(dragState.startBox.width + dx, 5, 100 - dragState.startBox.x),
-          height: clampPercent(dragState.startBox.height + dy, 5, 100 - dragState.startBox.y),
+          height: clampPercent(dragState.startBox.height + dy, 3, 100 - dragState.startBox.y),
         };
       }));
     };
@@ -1618,7 +1618,7 @@ function TabletOcrContentSelectionPage({
         x: 10,
         y: clampPercent(10 + samePageCount * 8, 4, 74),
         width: 72,
-        height: 12,
+        height: 8,
         selected: true,
         source: 'manual',
       },
@@ -1668,9 +1668,6 @@ function TabletOcrContentSelectionPage({
           <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
           <span className="text-[28px] font-semibold leading-none">识别作业资料</span>
         </button>
-        <div className="absolute left-[326px] top-[29px] text-[21px] leading-none text-[#7b858f]">
-          {getStepThreeModeLabel(mode)}
-        </div>
         <div className="absolute right-[40px] top-[24px] rounded-full bg-[#e7f7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#2fac76]">
           {subject}
         </div>
@@ -1696,20 +1693,21 @@ function TabletOcrContentSelectionPage({
             清空
           </button>
         </div>
-        <div className="absolute right-[34px] top-[15px] flex items-center gap-[18px]">
+        <div className="absolute right-[34px] top-[28px] flex items-center gap-[18px]">
           <span className="text-[20px] leading-none text-[#68727d]">
             已选中{selectedCount}题/已框选{boxes.length}题
           </span>
-          <button
-            className="h-[46px] rounded-[8px] bg-[#23bfb2] px-[28px] text-[21px] font-medium leading-none text-white active:bg-[#12a99d] disabled:bg-[#cfd7dd]"
-            disabled={selectedCount === 0}
-            onClick={() => setHasStarted(true)}
-            type="button"
-          >
-            开始识别
-          </button>
         </div>
       </div>
+
+      <button
+        className="absolute left-[996px] top-[560px] z-20 flex h-[88px] w-[88px] items-center justify-center rounded-full bg-[#23bfb2] text-center text-[20px] font-medium leading-[23px] text-white shadow-[0_12px_26px_rgba(35,191,178,0.36)] active:bg-[#12a99d] disabled:bg-[#cfd7dd] disabled:shadow-none"
+        disabled={selectedCount === 0}
+        onClick={() => setHasStarted(true)}
+        type="button"
+      >
+        开始<br />识别
+      </button>
 
       <main className="absolute bottom-0 left-0 right-0 top-[164px] flex">
         <section className="relative h-full w-[1040px] border-r border-[#dfe5ea] bg-[#f8fafb]">
@@ -1745,7 +1743,7 @@ function TabletOcrContentSelectionPage({
                     key={box.id}
                     className={`absolute border-2 ${
                       box.selected
-                        ? 'border-[#26c9bc] bg-[#ddf8f4]/75'
+                        ? 'border-[#26c9bc] bg-[#ddf8f4]/25'
                         : 'border-[#9ba6b0] bg-white/30'
                     }`}
                     onPointerDown={(event) => startBoxDrag(event, box, 'move')}
@@ -1758,7 +1756,7 @@ function TabletOcrContentSelectionPage({
                   >
                     <button
                       aria-label={box.selected ? '取消选中识别框' : '选中识别框'}
-                      className={`absolute left-[8px] top-[8px] flex h-[28px] w-[28px] items-center justify-center rounded-[4px] text-[18px] font-semibold leading-none text-white ${
+                      className={`absolute left-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-[3px] text-[12px] font-semibold leading-none text-white ${
                         box.selected ? 'bg-[#26c9bc]' : 'bg-[#9ba6b0]'
                       }`}
                       onClick={(event) => {
@@ -1772,7 +1770,7 @@ function TabletOcrContentSelectionPage({
                     </button>
                     <button
                       aria-label="删除识别框"
-                      className="absolute right-[8px] top-[8px] flex h-[28px] w-[28px] items-center justify-center rounded-full bg-[#202124] text-white active:bg-[#000]"
+                      className="absolute right-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[#202124]/55 text-white active:bg-[#000]"
                       onClick={(event) => {
                         event.stopPropagation();
                         deleteBox(box.id);
@@ -1780,11 +1778,11 @@ function TabletOcrContentSelectionPage({
                       onPointerDown={(event) => event.stopPropagation()}
                       type="button"
                     >
-                      <X className="h-[19px] w-[19px]" />
+                      <X className="h-[13px] w-[13px]" />
                     </button>
                     <button
                       aria-label="调整识别框大小"
-                      className="absolute bottom-[-10px] right-[-10px] h-[24px] w-[24px] rounded-full border-[3px] border-white bg-[#26c9bc] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
+                      className="absolute bottom-[-8px] right-[-8px] h-[18px] w-[18px] rounded-full border-[2px] border-white bg-[#26c9bc] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
                       onPointerDown={(event) => startBoxDrag(event, box, 'resize')}
                       type="button"
                     />
@@ -1815,11 +1813,7 @@ function TabletOcrContentSelectionPage({
         </section>
 
         <section className="relative flex-1 bg-[#eef2f5]">
-          <div className="absolute left-[58px] top-[48px]">
-            <div className="text-[31px] font-semibold leading-none text-[#202124]">选择识别内容</div>
-            <div className="mt-[16px] text-[21px] leading-none text-[#75808a]">{getStepThreeModeTip(mode)}</div>
-          </div>
-          <div className="absolute left-1/2 top-[184px] -translate-x-1/2">
+          <div className="absolute left-1/2 top-[116px] -translate-x-1/2">
             <StepThreeGuide mode={mode} />
           </div>
           {status === 'failed' ? (
