@@ -1515,12 +1515,10 @@ function StepThreeGuide({ mode }: { mode: RecognitionMode | '' }) {
 
 function TabletConfirmDialog({
   action,
-  boxCount,
   onCancel,
   onConfirm,
 }: {
   action: TabletConfirmAction;
-  boxCount: number;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -1535,11 +1533,11 @@ function TabletConfirmDialog({
           <h3 className="text-[28px] font-semibold leading-none text-[#202124]">
             {isClear ? '确认清空所有切题框？' : '确认更换资料吗？'}
           </h3>
-          <p className="mt-[24px] text-[21px] leading-[32px] text-[#68727d]">
-            {isClear
-              ? `将删除当前可见的 ${boxCount} 个切题框，此操作不可撤销。`
-              : '更换资料，将清空当前已识别的内容，并且需要重新选择识别方式。'}
-          </p>
+          {!isClear ? (
+            <p className="mt-[24px] text-[21px] leading-[32px] text-[#68727d]">
+              更换资料，将清空当前已识别的内容，并且需要重新选择识别方式。
+            </p>
+          ) : null}
         </div>
         <div className="absolute bottom-[30px] right-[32px] flex gap-[16px]">
           <button
@@ -1958,7 +1956,6 @@ function TabletOcrContentSelectionPage({
       </main>
       <TabletConfirmDialog
         action={confirmAction}
-        boxCount={boxes.length}
         onCancel={() => setConfirmAction(null)}
         onConfirm={handleConfirmAction}
       />
