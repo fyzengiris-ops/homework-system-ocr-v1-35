@@ -21,6 +21,9 @@ import {
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1200;
+const OCR_BOX_SELECT_ICON_SAFE_WIDTH = 24;
+const MATERIAL_PAGE_MAX_WIDTH = 890;
+const MATERIAL_PAGE_MAX_HEIGHT = 830;
 
 type SelectedImage = {
   name: string;
@@ -874,6 +877,34 @@ function clampPercent(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function getMaterialPageFrameSize(page: MaterialPage) {
+  const scale = Math.min(
+    MATERIAL_PAGE_MAX_WIDTH / page.naturalWidth,
+    MATERIAL_PAGE_MAX_HEIGHT / page.naturalHeight,
+  );
+
+  return {
+    width: page.naturalWidth * scale,
+    height: page.naturalHeight * scale,
+  };
+}
+
+function expandSystemBoxForSelectIcon(box: RecognitionBox, page: MaterialPage | undefined) {
+  if (!page || box.source !== 'system') return box;
+
+  const frame = getMaterialPageFrameSize(page);
+  const offsetPercent = (OCR_BOX_SELECT_ICON_SAFE_WIDTH / frame.width) * 100;
+  const actualOffset = Math.min(offsetPercent, box.x);
+  const rightEdge = clampPercent(box.x + box.width, 0, 100);
+  const nextX = box.x - actualOffset;
+
+  return {
+    ...box,
+    x: nextX,
+    width: clampPercent(rightEdge - nextX, 3, 100 - nextX),
+  };
+}
+
 function readBlobAsDataUrl(blob: Blob) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -1535,7 +1566,12 @@ function TabletOcrContentSelectionPage({
           return;
         }
 
-        const detectedBoxes = await detectMaterialBoxes(pages);
+        const detectedBoxes = (await detectMaterialBoxes(pages)).map((box) => (
+          expandSystemBoxForSelectIcon(
+            box,
+            pages.find((page) => page.pageNumber === box.pageNumber),
+          )
+        ));
         if (cancelled) return;
 
         setBoxes(detectedBoxes);
@@ -1606,17 +1642,7 @@ function TabletOcrContentSelectionPage({
   const activePage = materialPages.find((page) => page.pageNumber === activePageNumber) || materialPages[0];
   const activeBoxes = boxes.filter((box) => box.pageNumber === (activePage?.pageNumber || 1));
   const selectedCount = boxes.filter((box) => box.selected).length;
-  const imageFrame = activePage
-    ? (() => {
-        const maxWidth = 890;
-        const maxHeight = 830;
-        const scale = Math.min(maxWidth / activePage.naturalWidth, maxHeight / activePage.naturalHeight);
-        return {
-          width: activePage.naturalWidth * scale,
-          height: activePage.naturalHeight * scale,
-        };
-      })()
-    : { width: 760, height: 830 };
+  const imageFrame = activePage ? getMaterialPageFrameSize(activePage) : { width: 760, height: 830 };
 
   const addManualBox = () => {
     const pageNumber = activePage?.pageNumber || 1;
