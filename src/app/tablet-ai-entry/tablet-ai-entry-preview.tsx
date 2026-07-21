@@ -1509,6 +1509,7 @@ function TabletOcrContentSelectionPage({
   } | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
   const imageWrapRef = useRef<HTMLDivElement>(null);
+  const hasMovedBoxRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1560,6 +1561,12 @@ function TabletOcrContentSelectionPage({
     const handlePointerMove = (event: PointerEvent) => {
       const dx = ((event.clientX - dragState.startClientX) / dragState.containerRect.width) * 100;
       const dy = ((event.clientY - dragState.startClientY) / dragState.containerRect.height) * 100;
+      if (
+        Math.abs(event.clientX - dragState.startClientX) > 3 ||
+        Math.abs(event.clientY - dragState.startClientY) > 3
+      ) {
+        hasMovedBoxRef.current = true;
+      }
 
       setBoxes((currentBoxes) => currentBoxes.map((box) => {
         if (box.id !== dragState.id) return box;
@@ -1580,7 +1587,12 @@ function TabletOcrContentSelectionPage({
       }));
     };
 
-    const handlePointerUp = () => setDragState(null);
+    const handlePointerUp = () => {
+      setDragState(null);
+      window.setTimeout(() => {
+        hasMovedBoxRef.current = false;
+      }, 0);
+    };
 
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
@@ -1636,6 +1648,7 @@ function TabletOcrContentSelectionPage({
 
     event.preventDefault();
     event.stopPropagation();
+    hasMovedBoxRef.current = false;
     setDragState({
       id: box.id,
       action,
@@ -1746,6 +1759,11 @@ function TabletOcrContentSelectionPage({
                         ? 'border-[#26c9bc] bg-[#ddf8f4]/25'
                         : 'border-[#9ba6b0] bg-white/30'
                     }`}
+                    onClick={() => {
+                      if (!hasMovedBoxRef.current) {
+                        toggleBox(box.id);
+                      }
+                    }}
                     onPointerDown={(event) => startBoxDrag(event, box, 'move')}
                     style={{
                       left: `${box.x}%`,
