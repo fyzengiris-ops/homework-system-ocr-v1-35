@@ -891,6 +891,10 @@ function getMaterialPageFrameSize(page: MaterialPage) {
   };
 }
 
+function getMaterialPageTypeLabel(page: MaterialPage) {
+  return page.role === 'answer' ? '答案' : '试卷';
+}
+
 function expandSystemBoxForSelectIcon(box: RecognitionBox, page: MaterialPage | undefined) {
   if (!page || box.source !== 'system') return box;
 
@@ -1601,27 +1605,30 @@ function TabletOcrContentSelectionPage({
       setHasStarted(false);
 
       try {
-        const imagesForCut = mode === 'separate_answer'
-          ? images.filter((image) => image.role !== 'answer')
-          : images;
-
-        const pages = await prepareMaterialPages(imagesForCut);
+        const pages = await prepareMaterialPages(images);
         if (cancelled) return;
 
-        setMaterialPages(pages);
-        setActivePageNumber(pages[0]?.pageNumber || 1);
+        const pagesForCut = mode === 'separate_answer'
+          ? pages.filter((page) => page.role !== 'answer')
+          : pages;
 
-        if (pages.length === 0) {
+        setMaterialPages(pages);
+        setActivePageNumber((pagesForCut[0] || pages[0])?.pageNumber || 1);
+
+        if (pagesForCut.length === 0) {
           setStatus('failed');
           return;
         }
 
-        const detectedBoxes = (await detectMaterialBoxes(pages)).map((box) => (
-          expandSystemBoxForSelectIcon(
-            box,
-            pages.find((page) => page.pageNumber === box.pageNumber),
-          )
-        ));
+        const detectedBoxes = (await detectMaterialBoxes(pagesForCut)).map((box) => {
+          const displayPage = pagesForCut[(box.pageNumber || 1) - 1];
+          const mappedBox = {
+            ...box,
+            pageNumber: displayPage?.pageNumber || box.pageNumber,
+          };
+
+          return expandSystemBoxForSelectIcon(mappedBox, displayPage);
+        });
         if (cancelled) return;
 
         setBoxes(detectedBoxes);
@@ -1861,6 +1868,15 @@ function TabletOcrContentSelectionPage({
                 style={{ width: imageFrame.width, height: imageFrame.height }}
               >
                 <img alt="" className="h-full w-full object-fill" src={activePage.url} />
+                <div
+                  className={`absolute left-1/2 top-[8px] z-10 -translate-x-1/2 rounded-[4px] px-[16px] py-[6px] text-[18px] font-medium leading-none ${
+                    activePage.role === 'answer'
+                      ? 'bg-[#fff3dd] text-[#f0a12a]'
+                      : 'bg-[#eef7ff] text-[#268fe8]'
+                  }`}
+                >
+                  {getMaterialPageTypeLabel(activePage)}
+                </div>
                 {activeBoxes.map((box) => (
                   <div
                     key={box.id}
