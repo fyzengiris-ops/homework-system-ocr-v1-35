@@ -154,7 +154,23 @@ function calculateBoundingBoxFromElements(
     }
   }
 
-  if (!foundAny || !isFinite(minX)) return null;
+  if (!foundAny || !isFinite(minX)) {
+    for (const rl of resultList) {
+      if (!rl.Coord || rl.Coord.length === 0) continue;
+      const coord = rl.Coord[0];
+      const lt = coord.LeftTop, rb = coord.RightBottom;
+      if (lt?.X !== undefined && lt?.Y !== undefined && rb?.X !== undefined && rb?.Y !== undefined) {
+        return {
+          x: lt.X,
+          y: lt.Y,
+          width: rb.X - lt.X,
+          height: rb.Y - lt.Y,
+        };
+      }
+    }
+
+    return null;
+  }
 
   const padding = 4;
   return {
