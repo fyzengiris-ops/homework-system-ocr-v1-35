@@ -35,6 +35,7 @@ type RecognitionMode = 'questions_only' | 'same_image_answer' | 'separate_answer
 type ImageRole = 'question' | 'answer';
 type SubjectMode = 'single' | 'multiple';
 type OcrDetectStatus = 'loading' | 'ready' | 'failed';
+type CaptureCloseTarget = 'mode' | 'content' | 'upload' | null;
 
 type MaterialPage = SelectedImage & {
   pageNumber: number;
@@ -2197,6 +2198,7 @@ export function TabletAiEntryPreview() {
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedMode, setSelectedMode] = useState<RecognitionMode | ''>('');
   const [captureRole, setCaptureRole] = useState<ImageRole>('question');
+  const [captureCloseTarget, setCaptureCloseTarget] = useState<CaptureCloseTarget>(null);
   const [userMode, setUserMode] = useState<SubjectMode>('multiple');
   const selectedImagesRef = useRef(selectedImages);
   const questionImagesRef = useRef(questionImages);
@@ -2236,6 +2238,7 @@ export function TabletAiEntryPreview() {
     setIsOcrPreviewOpen(false);
     setIsCaptureOpen(false);
     setIsModeDialogOpen(false);
+    setCaptureCloseTarget(null);
 
     if (userMode === 'single') {
       setSelectedSubject(SINGLE_SUBJECT);
@@ -2269,11 +2272,13 @@ export function TabletAiEntryPreview() {
     }
 
     setIsCaptureOpen(true);
+    setCaptureCloseTarget('mode');
   };
 
   const handleOpenCamera = () => {
     setIsUploadDialogOpen(false);
     setIsCaptureOpen(true);
+    setCaptureCloseTarget('upload');
   };
 
   const getCurrentCaptureImages = () => {
@@ -2352,11 +2357,13 @@ export function TabletAiEntryPreview() {
 
       setSelectedImages([...questionImages, ...answerImages]);
       setIsCaptureOpen(false);
+      setCaptureCloseTarget(null);
       setIsOcrPreviewOpen(true);
       return;
     }
 
     setIsCaptureOpen(false);
+    setCaptureCloseTarget(null);
     setIsOcrPreviewOpen(true);
   };
 
@@ -2375,7 +2382,28 @@ export function TabletAiEntryPreview() {
   const handleSupplementMaterials = () => {
     setIsOcrPreviewOpen(false);
     setCaptureRole('question');
+    setCaptureCloseTarget('content');
     setIsCaptureOpen(true);
+  };
+
+  const handleCloseCapture = () => {
+    const closeTarget = captureCloseTarget;
+    setIsCaptureOpen(false);
+    setCaptureCloseTarget(null);
+
+    if (closeTarget === 'mode') {
+      setIsModeDialogOpen(true);
+      return;
+    }
+
+    if (closeTarget === 'content') {
+      setIsOcrPreviewOpen(true);
+      return;
+    }
+
+    if (closeTarget === 'upload') {
+      setIsUploadDialogOpen(true);
+    }
   };
 
   const currentCaptureImages = getCurrentCaptureImages();
@@ -2438,7 +2466,7 @@ export function TabletAiEntryPreview() {
               mode={selectedMode}
               onAlbumSelected={handleCaptureAlbumSelected}
               onCapture={handleCapture}
-              onClose={() => setIsCaptureOpen(false)}
+              onClose={handleCloseCapture}
               onDeleteImage={handleDeleteCaptureImage}
               onMoveImage={handleMoveCaptureImage}
               onPrimary={handleCapturePrimary}
