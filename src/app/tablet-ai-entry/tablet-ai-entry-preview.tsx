@@ -1594,6 +1594,7 @@ function TabletOcrContentSelectionPage({
   const [hasStarted, setHasStarted] = useState(false);
   const [confirmAction, setConfirmAction] = useState<TabletConfirmAction>(null);
   const imageWrapRef = useRef<HTMLDivElement>(null);
+  const pageWrapRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const hasMovedBoxRef = useRef(false);
 
   useEffect(() => {
@@ -1697,12 +1698,18 @@ function TabletOcrContentSelectionPage({
   }, [dragState]);
 
   const activePage = materialPages.find((page) => page.pageNumber === activePageNumber) || materialPages[0];
+  const questionPages = materialPages.filter((page) => page.role !== 'answer');
+  const answerPages = materialPages.filter((page) => page.role === 'answer');
+  const isSeparateMode = mode === 'separate_answer';
   const activeBoxes = boxes.filter((box) => box.pageNumber === (activePage?.pageNumber || 1));
   const selectedCount = boxes.filter((box) => box.selected).length;
   const imageFrame = activePage ? getMaterialPageFrameSize(activePage) : { width: 760, height: 830 };
 
   const addManualBox = () => {
-    const pageNumber = activePage?.pageNumber || 1;
+    const targetPage = activePage?.role === 'answer' ? questionPages[0] : activePage;
+    if (!targetPage) return;
+
+    const pageNumber = targetPage.pageNumber;
     const samePageCount = boxes.filter((box) => box.pageNumber === pageNumber).length;
 
     setBoxes((currentBoxes) => [
@@ -1726,7 +1733,7 @@ function TabletOcrContentSelectionPage({
     box: RecognitionBox,
     action: 'move' | 'resize',
   ) => {
-    const containerRect = imageWrapRef.current?.getBoundingClientRect();
+    const containerRect = (pageWrapRefs.current[box.pageNumber] || imageWrapRef.current)?.getBoundingClientRect();
     if (!containerRect) return;
 
     event.preventDefault();
@@ -1783,6 +1790,137 @@ function TabletOcrContentSelectionPage({
       setBoxes([]);
     }
   };
+
+  const renderMaterialPage = (page: MaterialPage, variant: 'question' | 'answer') => {
+    const frame = getMaterialPageFrameSize(page);
+    const pageBoxes = boxes.filter((box) => box.pageNumber === page.pageNumber);
+    const isQuestionPage = variant === 'question';
+    const isFirstQuestionPage = questionPages[0]?.pageNumber === page.pageNumber;
+
+    return (
+      <div
+        key={page.pageNumber}
+        className={`mx-auto mb-[28px] w-fit rounded-[12px] border bg-white p-[12px] shadow-[0_8px_24px_rgba(31,44,58,0.10)] ${
+          isQuestionPage ? 'border-[#9edfd8]' : 'border-[#f2cf99]'
+        }`}
+        onClick={() => {
+          if (isQuestionPage) {
+            setActivePageNumber(page.pageNumber);
+          }
+        }}
+      >
+        <div
+          className="relative bg-white"
+          ref={(node) => {
+            pageWrapRefs.current[page.pageNumber] = node;
+            if (page.pageNumber === activePage?.pageNumber) {
+              imageWrapRef.current = node;
+            }
+          }}
+          style={{ width: frame.width, height: frame.height }}
+        >
+          <img alt="" className="h-full w-full object-fill" src={page.url} />
+          {isQuestionPage ? pageBoxes.map((box) => (
+            <div
+              key={box.id}
+              className={`absolute border-2 ${
+                box.selected
+                  ? 'border-[#26c9bc] bg-[#ddf8f4]/25'
+                  : 'border-[#9ba6b0] bg-white/30'
+              }`}
+              onClick={() => {
+                if (!hasMovedBoxRef.current) {
+                  toggleBox(box.id);
+                }
+              }}
+              onPointerDown={(event) => startBoxDrag(event, box, 'move')}
+              style={{
+                left: `${box.x}%`,
+                top: `${box.y}%`,
+                width: `${box.width}%`,
+                height: `${box.height}%`,
+              }}
+            >
+              <button
+                aria-label={box.selected ? '取消选中识别框' : '选中识别框'}
+                className={`absolute left-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-[3px] text-[12px] font-semibold leading-none text-white ${
+                  box.selected ? 'bg-[#26c9bc]' : 'bg-[#9ba6b0]'
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleBox(box.id);
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                type="button"
+              >
+                ✓
+              </button>
+              <button
+                aria-label="删除识别框"
+                className="absolute right-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[#202124]/55 text-white active:bg-[#000]"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  deleteBox(box.id);
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                type="button"
+              >
+                <X className="h-[13px] w-[13px]" />
+              </button>
+              <button
+                aria-label="调整识别框大小"
+                className="absolute bottom-[-8px] right-[-8px] h-[18px] w-[18px] rounded-full border-[2px] border-white bg-[#26c9bc] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
+                onPointerDown={(event) => startBoxDrag(event, box, 'resize')}
+                type="button"
+              />
+            </div>
+          )) : null}
+          {isQuestionPage && pageBoxes.length === 0 && isFirstQuestionPage ? (
+            <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-[16px] bg-white/92 px-[42px] py-[34px] shadow-[0_12px_34px_rgba(31,44,58,0.16)]">
+              <div className="text-[24px] font-medium leading-none text-[#202124]">未识别到题目框</div>
+              <button
+                className="mt-[22px] h-[46px] rounded-[8px] bg-[#23bfb2] px-[24px] text-[20px] font-medium leading-none text-white active:bg-[#12a99d]"
+                onClick={addManualBox}
+                type="button"
+              >
+                添加识别框
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSeparateModeMaterials = () => (
+    <div className="absolute inset-0 overflow-y-auto px-[28px] py-[24px]">
+      <section>
+        <div className="mb-[18px] flex items-center gap-[14px]">
+          <span className="rounded-[6px] bg-[#e7f7ff] px-[16px] py-[8px] text-[21px] font-semibold leading-none text-[#268fe8]">
+            题目图片
+          </span>
+          <span className="text-[19px] leading-none text-[#7a848e]">
+            只在题目图片上框选需要识别的内容
+          </span>
+        </div>
+        {questionPages.map((page) => renderMaterialPage(page, 'question'))}
+      </section>
+
+      {answerPages.length > 0 ? (
+        <section className="mt-[34px] border-t border-dashed border-[#e3bd82] pt-[28px]">
+          <div className="mb-[18px] flex items-center gap-[14px]">
+            <span className="rounded-[6px] bg-[#fff3dd] px-[16px] py-[8px] text-[21px] font-semibold leading-none text-[#f0a12a]">
+              答案图片
+            </span>
+            <span className="text-[19px] leading-none text-[#9a7a45]">
+              用于后续匹配答案和解析，不需要框选
+            </span>
+          </div>
+          {answerPages.map((page) => renderMaterialPage(page, 'answer'))}
+        </section>
+      ) : null}
+    </div>
+  );
 
   return (
     <div className="absolute inset-0 z-30 bg-[#eef2f5]">
@@ -1847,6 +1985,7 @@ function TabletOcrContentSelectionPage({
               <div className="mt-[28px] text-[23px] leading-none text-white">正在处理文件信息</div>
             </div>
           ) : activePage ? (
+            isSeparateMode ? renderSeparateModeMaterials() : (
             <div className="absolute inset-0 overflow-auto">
               <div className="absolute left-[28px] top-[22px] flex items-center gap-[12px]">
                 {materialPages.map((page) => (
@@ -1946,6 +2085,7 @@ function TabletOcrContentSelectionPage({
                 ) : null}
               </div>
             </div>
+            )
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <div className="text-[25px] font-medium text-[#202124]">暂无可识别图片</div>
