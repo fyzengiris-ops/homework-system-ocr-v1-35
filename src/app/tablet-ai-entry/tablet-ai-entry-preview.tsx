@@ -892,10 +892,6 @@ function getMaterialPageFrameSize(page: MaterialPage) {
   };
 }
 
-function getMaterialPageTypeLabel(page: MaterialPage) {
-  return page.role === 'answer' ? '答案' : '试卷';
-}
-
 function expandSystemBoxForSelectIcon(box: RecognitionBox, page: MaterialPage | undefined) {
   if (!page || box.source !== 'system') return box;
 
@@ -1743,9 +1739,7 @@ function TabletOcrContentSelectionPage({
   const questionPages = materialPages.filter((page) => page.role !== 'answer');
   const answerPages = materialPages.filter((page) => page.role === 'answer');
   const isSeparateMode = mode === 'separate_answer';
-  const activeBoxes = boxes.filter((box) => box.pageNumber === (activePage?.pageNumber || 1));
   const selectedCount = boxes.filter((box) => box.selected).length;
-  const imageFrame = activePage ? getMaterialPageFrameSize(activePage) : { width: 760, height: 830 };
 
   const addManualBox = () => {
     const targetPage = activePage?.role === 'answer' ? questionPages[0] : activePage;
@@ -1964,6 +1958,12 @@ function TabletOcrContentSelectionPage({
     </div>
   );
 
+  const renderUnifiedModeMaterials = () => (
+    <div className="absolute inset-0 overflow-y-auto px-[28px] py-[24px]">
+      {materialPages.map((page) => renderMaterialPage(page, 'question'))}
+    </div>
+  );
+
   return (
     <div className="absolute inset-0 z-30 bg-[#eef2f5]">
       <header className="absolute left-0 top-0 h-[88px] w-full border-b border-[#e3e7eb] bg-white">
@@ -2027,107 +2027,7 @@ function TabletOcrContentSelectionPage({
               <div className="mt-[28px] text-[23px] leading-none text-white">正在处理文件信息</div>
             </div>
           ) : activePage ? (
-            isSeparateMode ? renderSeparateModeMaterials() : (
-            <div className="absolute inset-0 overflow-auto">
-              <div className="absolute left-[28px] top-[22px] flex items-center gap-[12px]">
-                {materialPages.map((page) => (
-                  <button
-                    key={page.pageNumber}
-                    className={`h-[42px] rounded-[7px] px-[18px] text-[19px] leading-none ${
-                      activePageNumber === page.pageNumber ? 'bg-[#202124] text-white' : 'bg-white text-[#5b6672]'
-                    }`}
-                    onClick={() => setActivePageNumber(page.pageNumber)}
-                    type="button"
-                  >
-                    第{page.pageNumber}页
-                  </button>
-                ))}
-              </div>
-              <div
-                className="absolute left-1/2 top-[82px] -translate-x-1/2 bg-white shadow-[0_8px_28px_rgba(31,44,58,0.12)]"
-                ref={imageWrapRef}
-                style={{ width: imageFrame.width, height: imageFrame.height }}
-              >
-                <img alt="" className="h-full w-full object-fill" src={activePage.url} />
-                <div
-                  className={`absolute left-1/2 top-[8px] z-10 -translate-x-1/2 rounded-[4px] px-[16px] py-[6px] text-[18px] font-medium leading-none ${
-                    activePage.role === 'answer'
-                      ? 'bg-[#fff3dd] text-[#f0a12a]'
-                      : 'bg-[#eef7ff] text-[#268fe8]'
-                  }`}
-                >
-                  {getMaterialPageTypeLabel(activePage)}
-                </div>
-                {activeBoxes.map((box) => (
-                  <div
-                    key={box.id}
-                    className={`absolute border-2 ${
-                      box.selected
-                        ? 'border-[#26c9bc] bg-[#ddf8f4]/25'
-                        : 'border-[#9ba6b0] bg-white/30'
-                    }`}
-                    onClick={() => {
-                      if (!hasMovedBoxRef.current) {
-                        toggleBox(box.id);
-                      }
-                    }}
-                    onPointerDown={(event) => startBoxDrag(event, box, 'move')}
-                    style={{
-                      left: `${box.x}%`,
-                      top: `${box.y}%`,
-                      width: `${box.width}%`,
-                      height: `${box.height}%`,
-                    }}
-                  >
-                    <button
-                      aria-label={box.selected ? '取消选中识别框' : '选中识别框'}
-                      className={`absolute left-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-[3px] text-[12px] font-semibold leading-none text-white ${
-                        box.selected ? 'bg-[#26c9bc]' : 'bg-[#9ba6b0]'
-                      }`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleBox(box.id);
-                      }}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      type="button"
-                    >
-                      ✓
-                    </button>
-                    <button
-                      aria-label="删除识别框"
-                      className="absolute right-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[#202124]/55 text-white active:bg-[#000]"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        deleteBox(box.id);
-                      }}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      type="button"
-                    >
-                      <X className="h-[13px] w-[13px]" />
-                    </button>
-                    <button
-                      aria-label="调整识别框大小"
-                      className="absolute bottom-[-8px] right-[-8px] h-[18px] w-[18px] rounded-full border-[2px] border-white bg-[#26c9bc] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
-                      onPointerDown={(event) => startBoxDrag(event, box, 'resize')}
-                      type="button"
-                    />
-                  </div>
-                ))}
-                {activeBoxes.length === 0 ? (
-                  <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-[16px] bg-white/92 px-[42px] py-[34px] shadow-[0_12px_34px_rgba(31,44,58,0.16)]">
-                    <div className="text-[24px] font-medium leading-none text-[#202124]">未识别到题目框</div>
-                    <button
-                      className="mt-[22px] h-[46px] rounded-[8px] bg-[#23bfb2] px-[24px] text-[20px] font-medium leading-none text-white active:bg-[#12a99d]"
-                      onClick={addManualBox}
-                      type="button"
-                    >
-                      添加识别框
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            )
+            isSeparateMode ? renderSeparateModeMaterials() : renderUnifiedModeMaterials()
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <div className="text-[25px] font-medium text-[#202124]">暂无可识别图片</div>
