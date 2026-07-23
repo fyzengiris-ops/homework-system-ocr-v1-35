@@ -1198,7 +1198,7 @@ function CaptureSimulator({
     : selectedImages.length;
 
   return (
-    <div className="absolute inset-0 z-30 overflow-hidden bg-[#101010]">
+    <div className="absolute inset-0 z-40 overflow-hidden bg-[#101010]">
       <input
         ref={fileInputRef}
         accept="image/*"
@@ -1597,28 +1597,69 @@ function TabletOcrContentSelectionPage({
   const imageWrapRef = useRef<HTMLDivElement>(null);
   const pageWrapRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const hasMovedBoxRef = useRef(false);
+  const materialPagesRef = useRef<MaterialPage[]>([]);
+  const processedImageUrlsRef = useRef<Set<string>>(new Set());
+  const detectedModeRef = useRef<RecognitionMode | ''>(mode);
+
+  useEffect(() => {
+    materialPagesRef.current = materialPages;
+  }, [materialPages]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function runDetect() {
-      setStatus('loading');
-      setBoxes([]);
-      setHasStarted(false);
+      const currentImageUrls = new Set(images.map((image) => image.url));
+      const hasRemovedImage = Array.from(processedImageUrlsRef.current).some((url) => !currentImageUrls.has(url));
+      const hasModeChanged = detectedModeRef.current !== mode;
+
+      if (hasRemovedImage || hasModeChanged) {
+        processedImageUrlsRef.current = new Set();
+        materialPagesRef.current = [];
+        detectedModeRef.current = mode;
+        setMaterialPages([]);
+        setBoxes([]);
+        setHasStarted(false);
+      }
+
+      const existingPages = hasRemovedImage || hasModeChanged ? [] : materialPagesRef.current;
+      const newImages = images.filter((image) => !processedImageUrlsRef.current.has(image.url));
+
+      if (newImages.length === 0) {
+        if (existingPages.length === 0) {
+          setStatus('failed');
+        }
+        return;
+      }
+
+      const isInitialLoad = existingPages.length === 0;
+      if (isInitialLoad) {
+        setStatus('loading');
+        setBoxes([]);
+        setHasStarted(false);
+      }
 
       try {
-        const pages = await prepareMaterialPages(images);
+        const preparedPages = await prepareMaterialPages(newImages);
         if (cancelled) return;
 
+        const pageOffset = existingPages.length;
+        const newPages = preparedPages.map((page) => ({
+          ...page,
+          pageNumber: page.pageNumber + pageOffset,
+        }));
+        const pages = [...existingPages, ...newPages];
         const pagesForCut = mode === 'separate_answer'
-          ? pages.filter((page) => page.role !== 'answer')
-          : pages;
+          ? newPages.filter((page) => page.role !== 'answer')
+          : newPages;
 
+        materialPagesRef.current = pages;
         setMaterialPages(pages);
         setActivePageNumber((pagesForCut[0] || pages[0])?.pageNumber || 1);
+        newImages.forEach((image) => processedImageUrlsRef.current.add(image.url));
 
         if (pagesForCut.length === 0) {
-          setStatus('failed');
+          setStatus(pages.length > 0 ? 'ready' : 'failed');
           return;
         }
 
@@ -1633,12 +1674,12 @@ function TabletOcrContentSelectionPage({
         });
         if (cancelled) return;
 
-        setBoxes(detectedBoxes);
-        setStatus(detectedBoxes.length > 0 ? 'ready' : 'failed');
+        setBoxes((currentBoxes) => (isInitialLoad ? detectedBoxes : [...currentBoxes, ...detectedBoxes]));
+        setStatus(detectedBoxes.length > 0 || pages.length > 0 ? 'ready' : 'failed');
       } catch (error) {
         if (!cancelled) {
           console.error('[TabletOCR] auto detect failed:', error);
-          setStatus('failed');
+          setStatus(isInitialLoad ? 'failed' : 'ready');
         }
       }
     }
@@ -2195,6 +2236,9 @@ export function TabletAiEntryPreview() {
   const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
   const [questionImages, setQuestionImages] = useState<SelectedImage[]>([]);
   const [answerImages, setAnswerImages] = useState<SelectedImage[]>([]);
+  const [supplementSelectedImages, setSupplementSelectedImages] = useState<SelectedImage[]>([]);
+  const [supplementQuestionImages, setSupplementQuestionImages] = useState<SelectedImage[]>([]);
+  const [supplementAnswerImages, setSupplementAnswerImages] = useState<SelectedImage[]>([]);
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedMode, setSelectedMode] = useState<RecognitionMode | ''>('');
   const [captureRole, setCaptureRole] = useState<ImageRole>('question');
@@ -2203,6 +2247,9 @@ export function TabletAiEntryPreview() {
   const selectedImagesRef = useRef(selectedImages);
   const questionImagesRef = useRef(questionImages);
   const answerImagesRef = useRef(answerImages);
+  const supplementSelectedImagesRef = useRef(supplementSelectedImages);
+  const supplementQuestionImagesRef = useRef(supplementQuestionImages);
+  const supplementAnswerImagesRef = useRef(supplementAnswerImages);
 
   useEffect(() => {
     selectedImagesRef.current = selectedImages;
@@ -2216,11 +2263,38 @@ export function TabletAiEntryPreview() {
     answerImagesRef.current = answerImages;
   }, [answerImages]);
 
+  useEffect(() => {
+    supplementSelectedImagesRef.current = supplementSelectedImages;
+  }, [supplementSelectedImages]);
+
+  useEffect(() => {
+    supplementQuestionImagesRef.current = supplementQuestionImages;
+  }, [supplementQuestionImages]);
+
+  useEffect(() => {
+    supplementAnswerImagesRef.current = supplementAnswerImages;
+  }, [supplementAnswerImages]);
+
   useEffect(() => () => {
     revokeImageUrls(selectedImagesRef.current);
     revokeImageUrls(questionImagesRef.current);
     revokeImageUrls(answerImagesRef.current);
+    revokeImageUrls(supplementSelectedImagesRef.current);
+    revokeImageUrls(supplementQuestionImagesRef.current);
+    revokeImageUrls(supplementAnswerImagesRef.current);
   }, []);
+
+  const clearSupplementImages = (shouldRevoke = true) => {
+    if (shouldRevoke) {
+      revokeImageUrls(supplementSelectedImagesRef.current);
+      revokeImageUrls(supplementQuestionImagesRef.current);
+      revokeImageUrls(supplementAnswerImagesRef.current);
+    }
+
+    setSupplementSelectedImages([]);
+    setSupplementQuestionImages([]);
+    setSupplementAnswerImages([]);
+  };
 
   const handleAlbumSelected = (files: File[]) => {
     revokeImageUrls(selectedImages);
@@ -2235,6 +2309,7 @@ export function TabletAiEntryPreview() {
   };
 
   const handleOpenRecognitionFlow = () => {
+    clearSupplementImages();
     setIsOcrPreviewOpen(false);
     setIsCaptureOpen(false);
     setIsModeDialogOpen(false);
@@ -2258,6 +2333,7 @@ export function TabletAiEntryPreview() {
   };
 
   const handleModeSelect = (mode: RecognitionMode) => {
+    clearSupplementImages();
     revokeImageUrls(selectedImages);
     revokeImageUrls(questionImages);
     revokeImageUrls(answerImages);
@@ -2276,23 +2352,31 @@ export function TabletAiEntryPreview() {
   };
 
   const handleOpenCamera = () => {
+    clearSupplementImages();
     setIsUploadDialogOpen(false);
     setIsCaptureOpen(true);
     setCaptureCloseTarget('upload');
   };
 
+  const isSupplementCapture = captureCloseTarget === 'content';
+  const captureSelectedImages = isSupplementCapture ? supplementSelectedImages : selectedImages;
+  const captureQuestionImages = isSupplementCapture ? supplementQuestionImages : questionImages;
+  const captureAnswerImages = isSupplementCapture ? supplementAnswerImages : answerImages;
+
   const getCurrentCaptureImages = () => {
     if (selectedMode === 'separate_answer') {
-      return captureRole === 'question' ? questionImages : answerImages;
+      return captureRole === 'question' ? captureQuestionImages : captureAnswerImages;
     }
 
-    return selectedImages;
+    return captureSelectedImages;
   };
 
   const handleCapture = () => {
     if (selectedMode === 'separate_answer') {
-      const updater = captureRole === 'question' ? setQuestionImages : setAnswerImages;
-      const currentCount = captureRole === 'question' ? questionImages.length : answerImages.length;
+      const updater = isSupplementCapture
+        ? captureRole === 'question' ? setSupplementQuestionImages : setSupplementAnswerImages
+        : captureRole === 'question' ? setQuestionImages : setAnswerImages;
+      const currentCount = captureRole === 'question' ? captureQuestionImages.length : captureAnswerImages.length;
       updater((currentImages) => [
         ...currentImages,
         createMockCapture(captureRole, currentCount + 1),
@@ -2300,7 +2384,8 @@ export function TabletAiEntryPreview() {
       return;
     }
 
-    setSelectedImages((currentImages) => [
+    const updater = isSupplementCapture ? setSupplementSelectedImages : setSelectedImages;
+    updater((currentImages) => [
       ...currentImages,
       createMockCapture(undefined, currentImages.length + 1),
     ]);
@@ -2313,29 +2398,39 @@ export function TabletAiEntryPreview() {
     );
 
     if (selectedMode === 'separate_answer') {
-      const updater = captureRole === 'question' ? setQuestionImages : setAnswerImages;
+      const updater = isSupplementCapture
+        ? captureRole === 'question' ? setSupplementQuestionImages : setSupplementAnswerImages
+        : captureRole === 'question' ? setQuestionImages : setAnswerImages;
       updater((currentImages) => [...currentImages, ...nextImages]);
       return;
     }
 
-    setSelectedImages((currentImages) => [...currentImages, ...nextImages]);
+    const updater = isSupplementCapture ? setSupplementSelectedImages : setSelectedImages;
+    updater((currentImages) => [...currentImages, ...nextImages]);
   };
 
   const handleDeleteCaptureImage = (image: SelectedImage, role?: ImageRole) => {
     if (selectedMode === 'separate_answer' && role) {
-      const updater = role === 'question' ? setQuestionImages : setAnswerImages;
+      const updater = isSupplementCapture
+        ? role === 'question' ? setSupplementQuestionImages : setSupplementAnswerImages
+        : role === 'question' ? setQuestionImages : setAnswerImages;
       updater((currentImages) => currentImages.filter((currentImage) => currentImage.url !== image.url));
       revokeImageUrl(image);
       return;
     }
 
-    setSelectedImages((currentImages) => currentImages.filter((currentImage) => currentImage.url !== image.url));
+    const updater = isSupplementCapture ? setSupplementSelectedImages : setSelectedImages;
+    updater((currentImages) => currentImages.filter((currentImage) => currentImage.url !== image.url));
     revokeImageUrl(image);
   };
 
   const handleMoveCaptureImage = (image: SelectedImage, fromRole: ImageRole, toRole: ImageRole) => {
-    const fromUpdater = fromRole === 'question' ? setQuestionImages : setAnswerImages;
-    const toUpdater = toRole === 'question' ? setQuestionImages : setAnswerImages;
+    const fromUpdater = isSupplementCapture
+      ? fromRole === 'question' ? setSupplementQuestionImages : setSupplementAnswerImages
+      : fromRole === 'question' ? setQuestionImages : setAnswerImages;
+    const toUpdater = isSupplementCapture
+      ? toRole === 'question' ? setSupplementQuestionImages : setSupplementAnswerImages
+      : toRole === 'question' ? setQuestionImages : setAnswerImages;
 
     fromUpdater((currentImages) => currentImages.filter((currentImage) => currentImage.url !== image.url));
     toUpdater((currentImages) => [
@@ -2355,11 +2450,25 @@ export function TabletAiEntryPreview() {
         return;
       }
 
-      setSelectedImages([...questionImages, ...answerImages]);
+      if (isSupplementCapture) {
+        const nextImages = [...supplementQuestionImages, ...supplementAnswerImages];
+        setQuestionImages((currentImages) => [...currentImages, ...supplementQuestionImages]);
+        setAnswerImages((currentImages) => [...currentImages, ...supplementAnswerImages]);
+        setSelectedImages((currentImages) => [...currentImages, ...nextImages]);
+        clearSupplementImages(false);
+      } else {
+        setSelectedImages([...questionImages, ...answerImages]);
+      }
+
       setIsCaptureOpen(false);
       setCaptureCloseTarget(null);
       setIsOcrPreviewOpen(true);
       return;
+    }
+
+    if (isSupplementCapture) {
+      setSelectedImages((currentImages) => [...currentImages, ...supplementSelectedImages]);
+      clearSupplementImages(false);
     }
 
     setIsCaptureOpen(false);
@@ -2368,6 +2477,7 @@ export function TabletAiEntryPreview() {
   };
 
   const handleReplaceMaterials = () => {
+    clearSupplementImages();
     revokeImageUrls(selectedImages);
     revokeImageUrls(questionImages);
     revokeImageUrls(answerImages);
@@ -2380,7 +2490,8 @@ export function TabletAiEntryPreview() {
   };
 
   const handleSupplementMaterials = () => {
-    setIsOcrPreviewOpen(false);
+    clearSupplementImages();
+    setIsOcrPreviewOpen(true);
     setCaptureRole('question');
     setCaptureCloseTarget('content');
     setIsCaptureOpen(true);
@@ -2397,6 +2508,7 @@ export function TabletAiEntryPreview() {
     }
 
     if (closeTarget === 'content') {
+      clearSupplementImages();
       setIsOcrPreviewOpen(true);
       return;
     }
@@ -2459,8 +2571,8 @@ export function TabletAiEntryPreview() {
           ) : null}
           {isCaptureOpen ? (
             <CaptureSimulator
-              answerCount={answerImages.length}
-              answerImages={answerImages}
+              answerCount={captureAnswerImages.length}
+              answerImages={captureAnswerImages}
               currentImages={currentCaptureImages}
               currentRole={selectedMode === 'separate_answer' ? captureRole : undefined}
               mode={selectedMode}
@@ -2473,9 +2585,9 @@ export function TabletAiEntryPreview() {
               onRoleChange={setCaptureRole}
               primaryDisabled={capturePrimaryDisabled}
               primaryText={capturePrimaryText}
-              questionCount={questionImages.length}
-              questionImages={questionImages}
-              selectedImages={selectedImages}
+              questionCount={captureQuestionImages.length}
+              questionImages={captureQuestionImages}
+              selectedImages={captureSelectedImages}
               title={captureTitle}
             />
           ) : null}
