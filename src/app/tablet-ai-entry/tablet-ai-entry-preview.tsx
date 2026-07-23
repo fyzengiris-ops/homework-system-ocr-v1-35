@@ -1900,7 +1900,7 @@ function TabletOcrContentSelectionPage({
             题目图片
           </span>
           <span className="text-[19px] leading-none text-[#7a848e]">
-            只在题目图片上框选需要识别的内容
+            对题目图片框选需识别的内容
           </span>
         </div>
         {questionPages.map((page) => renderMaterialPage(page, 'question'))}
@@ -1913,7 +1913,7 @@ function TabletOcrContentSelectionPage({
               答案图片
             </span>
             <span className="text-[19px] leading-none text-[#9a7a45]">
-              用于后续匹配答案和解析，不需要框选
+              用于系统匹配答案和解析，无需框选
             </span>
           </div>
           {answerPages.map((page) => renderMaterialPage(page, 'answer'))}
