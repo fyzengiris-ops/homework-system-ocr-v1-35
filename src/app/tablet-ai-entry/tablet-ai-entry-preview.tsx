@@ -3302,14 +3302,14 @@ function TabletOcrQuestionReviewPage({
           </div>
         </section>
         <section className="relative flex-1 bg-[#eef2f5]">
-          <div className="absolute left-[28px] right-[28px] top-[24px] flex items-center justify-between">
+          <div className="absolute left-0 right-0 top-0 z-10 flex h-[66px] items-center justify-between border-b border-[#e3e7eb] bg-white px-[28px]">
             <StepSegmentedControl
               labels={{ recognition: '识别模式', image: '图片模式' }}
               mode={globalMode}
               onChange={handleGlobalModeChange}
             />
             <div className="flex items-center gap-[12px]">
-              <span className="rounded-full bg-white px-[18px] py-[10px] text-[19px] leading-none text-[#68727d] shadow-sm">
+              <span className="rounded-full bg-[#f3f5f6] px-[18px] py-[10px] text-[19px] leading-none text-[#68727d]">
                 共 {questions.length} 题
               </span>
             </div>
@@ -3320,7 +3320,7 @@ function TabletOcrQuestionReviewPage({
               {recognitionMessage || '正在智能识别中...'}
             </div>
           ) : null}
-          <div className={`absolute bottom-0 left-[28px] right-[28px] overflow-y-auto pb-[36px] ${shouldShowRecognitionBar ? 'top-[148px]' : 'top-[104px]'}`}>
+          <div className={`absolute bottom-0 left-[28px] right-[28px] overflow-y-auto pb-[36px] ${shouldShowRecognitionBar ? 'top-[148px]' : 'top-[90px]'}`}>
             {questions.length > 0 || recognizingReviewBoxIds.size > 0 ? (
               <div className="space-y-[22px]">{renderReviewQuestionItems()}</div>
             ) : (
