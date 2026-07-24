@@ -3,10 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
   Camera,
   ChevronLeft,
+  ChevronDown,
+  Check,
   CirclePlus,
   Clock3,
+  EllipsisVertical,
   FileText,
   Image as ImageIcon,
   Images,
@@ -15,7 +20,10 @@ import {
   Mic2,
   Minus,
   Plus,
+  Scissors,
+  Search,
   SendHorizonal,
+  Trash2,
   X,
 } from 'lucide-react';
 
@@ -36,6 +44,8 @@ type ImageRole = 'question' | 'answer';
 type SubjectMode = 'single' | 'multiple';
 type OcrDetectStatus = 'loading' | 'ready' | 'failed';
 type CaptureCloseTarget = 'mode' | 'content' | 'upload' | null;
+type ReviewDisplayMode = 'recognition' | 'image';
+type ReviewQuestionType = 'single_choice' | 'multiple_choice' | 'fill_blank' | 'short_answer' | 'material' | 'judge';
 
 type MaterialPage = SelectedImage & {
   pageNumber: number;
@@ -57,7 +67,37 @@ type RecognitionBox = {
 
 type TabletConfirmAction = 'replace' | 'clear' | null;
 
+type ReviewQuestion = {
+  id: string;
+  pageNumber: number;
+  crop: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  questionType: ReviewQuestionType;
+  optionCount: number;
+  blankCount: number;
+  subQuestions: Array<{
+    id: string;
+    questionType: ReviewQuestionType;
+    optionCount: number;
+    blankCount: number;
+  }>;
+  viewMode: ReviewDisplayMode;
+};
+
 const SINGLE_SUBJECT = '高中数学';
+
+const reviewQuestionTypeOptions: Array<{ value: ReviewQuestionType; label: string }> = [
+  { value: 'single_choice', label: '单选题' },
+  { value: 'multiple_choice', label: '多选题' },
+  { value: 'fill_blank', label: '填空题' },
+  { value: 'short_answer', label: '问答题' },
+  { value: 'material', label: '材料题' },
+  { value: 'judge', label: '判断题' },
+];
 
 const assignments = [
   {
@@ -1597,6 +1637,673 @@ function AddBoxModeTipDialog({
   );
 }
 
+function getReviewQuestionTypeLabel(type: ReviewQuestionType) {
+  return reviewQuestionTypeOptions.find((option) => option.value === type)?.label || '问答题';
+}
+
+function createInitialReviewQuestions(boxes: RecognitionBox[], displayMode: ReviewDisplayMode): ReviewQuestion[] {
+  const typeCycle: ReviewQuestionType[] = ['single_choice', 'multiple_choice', 'fill_blank', 'short_answer', 'material'];
+
+  return boxes
+    .filter((box) => box.selected)
+    .sort((firstBox, secondBox) => firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y)
+    .map((box, index) => {
+      const questionType = typeCycle[index % typeCycle.length];
+
+      return {
+        id: box.id,
+        pageNumber: box.pageNumber,
+        crop: {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+        },
+        questionType,
+        optionCount: questionType === 'multiple_choice' ? 5 : 4,
+        blankCount: questionType === 'fill_blank' ? 2 : 1,
+        subQuestions: questionType === 'material'
+          ? [
+              { id: `${box.id}-sub-1`, questionType: 'short_answer', optionCount: 4, blankCount: 1 },
+              { id: `${box.id}-sub-2`, questionType: 'single_choice', optionCount: 4, blankCount: 1 },
+              { id: `${box.id}-sub-3`, questionType: 'fill_blank', optionCount: 4, blankCount: 2 },
+            ]
+          : [],
+        viewMode: displayMode,
+      };
+    });
+}
+
+function StepSegmentedControl({
+  mode,
+  onChange,
+}: {
+  mode: ReviewDisplayMode;
+  onChange: (mode: ReviewDisplayMode) => void;
+}) {
+  return (
+    <div className="flex h-[42px] rounded-[8px] bg-[#eef1f3] p-[4px]">
+      <button
+        className={`h-[34px] rounded-[6px] px-[15px] text-[18px] font-medium leading-none ${
+          mode === 'recognition' ? 'bg-white text-[#202124] shadow-sm' : 'text-[#68727d]'
+        }`}
+        onClick={() => onChange('recognition')}
+        type="button"
+      >
+        识别
+      </button>
+      <button
+        className={`h-[34px] rounded-[6px] px-[15px] text-[18px] font-medium leading-none ${
+          mode === 'image' ? 'bg-white text-[#202124] shadow-sm' : 'text-[#68727d]'
+        }`}
+        onClick={() => onChange('image')}
+        type="button"
+      >
+        图片
+      </button>
+    </div>
+  );
+}
+
+function QuestionTypeSelect({
+  value,
+  onChange,
+}: {
+  value: ReviewQuestionType;
+  onChange: (value: ReviewQuestionType) => void;
+}) {
+  return (
+    <label className="relative inline-flex h-[42px] min-w-[128px] items-center rounded-[7px] border border-[#26c9bc] bg-white pl-[14px] pr-[38px] text-[20px] font-medium leading-none text-[#16a69a]">
+      <select
+        aria-label="题型"
+        className="absolute inset-0 cursor-pointer opacity-0"
+        onChange={(event) => onChange(event.target.value as ReviewQuestionType)}
+        value={value}
+      >
+        {reviewQuestionTypeOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <span>{getReviewQuestionTypeLabel(value)}</span>
+      <ChevronDown className="absolute right-[10px] top-1/2 h-[22px] w-[22px] -translate-y-1/2" />
+    </label>
+  );
+}
+
+function CountStepper({
+  label,
+  onChange,
+  value,
+}: {
+  label: string;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <div className="inline-flex h-[40px] items-center overflow-hidden rounded-[7px] border border-[#d7dde3] bg-white">
+      <span className="px-[12px] text-[18px] leading-none text-[#68727d]">{label}</span>
+      <button
+        className="flex h-full w-[38px] items-center justify-center border-l border-[#d7dde3] text-[#69727c] active:bg-[#f3f5f6] disabled:text-[#c4cbd2]"
+        disabled={value <= 1}
+        onClick={() => onChange(Math.max(1, value - 1))}
+        type="button"
+      >
+        <Minus className="h-[18px] w-[18px]" />
+      </button>
+      <span className="flex h-full min-w-[44px] items-center justify-center border-l border-[#d7dde3] text-[20px] leading-none text-[#202124]">
+        {value}
+      </span>
+      <button
+        className="flex h-full w-[38px] items-center justify-center border-l border-[#d7dde3] text-[#69727c] active:bg-[#f3f5f6]"
+        onClick={() => onChange(Math.min(12, value + 1))}
+        type="button"
+      >
+        <Plus className="h-[18px] w-[18px]" />
+      </button>
+    </div>
+  );
+}
+
+function CroppedQuestionImage({
+  crop,
+  isEditing,
+  onClick,
+  onResizeStart,
+  page,
+}: {
+  crop: ReviewQuestion['crop'];
+  isEditing: boolean;
+  onClick: () => void;
+  onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  page: MaterialPage | undefined;
+}) {
+  if (!page) {
+    return (
+      <div
+        className="flex h-[204px] w-full items-center justify-center rounded-[8px] border border-dashed border-[#d7dde3] bg-[#f8fafb] text-[20px] text-[#8b949e]"
+        onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') onClick();
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        暂无题目图片
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`relative h-[204px] w-full overflow-hidden rounded-[8px] border bg-white text-left ${
+        isEditing ? 'border-[3px] border-[#23bfb2]' : 'border-[#dfe4e8] active:border-[#23bfb2]'
+      }`}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') onClick();
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <img
+        alt=""
+        className="absolute max-w-none object-fill"
+        src={page.url}
+        style={{
+          height: `${10000 / crop.height}%`,
+          left: `${-(crop.x / crop.width) * 100}%`,
+          top: `${-(crop.y / crop.height) * 100}%`,
+          width: `${10000 / crop.width}%`,
+        }}
+      />
+      {isEditing ? (
+        <>
+          <div className="absolute inset-0 border-[2px] border-dashed border-[#23bfb2]" />
+          <div className="absolute left-[14px] top-[14px] inline-flex items-center gap-[8px] rounded-full bg-[#202124]/78 px-[14px] py-[9px] text-[17px] font-medium leading-none text-white">
+            <Scissors className="h-[18px] w-[18px]" />
+            裁剪中
+          </div>
+          <button
+            aria-label="调整裁剪范围"
+            className="absolute bottom-[10px] right-[10px] h-[32px] w-[32px] rounded-full border-[3px] border-white bg-[#23bfb2] shadow-[0_3px_12px_rgba(31,44,58,0.24)]"
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={onResizeStart}
+            type="button"
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function AnswerConfigPanel({
+  onAddSubQuestion,
+  onBlankCountChange,
+  onOptionCountChange,
+  onSubQuestionTypeChange,
+  question,
+}: {
+  onAddSubQuestion: () => void;
+  onBlankCountChange: (value: number) => void;
+  onOptionCountChange: (value: number) => void;
+  onSubQuestionTypeChange: (subQuestionId: string, value: ReviewQuestionType) => void;
+  question: ReviewQuestion;
+}) {
+  if (question.questionType === 'single_choice' || question.questionType === 'multiple_choice') {
+    return <CountStepper label="选项数" onChange={onOptionCountChange} value={question.optionCount} />;
+  }
+
+  if (question.questionType === 'fill_blank') {
+    return <CountStepper label="空数" onChange={onBlankCountChange} value={question.blankCount} />;
+  }
+
+  if (question.questionType === 'material') {
+    return (
+      <div>
+        <div className="mb-[16px] flex items-center gap-[14px]">
+          <button
+            className="inline-flex h-[40px] items-center gap-[8px] rounded-[7px] border border-[#d7dde3] bg-white px-[14px] text-[19px] leading-none text-[#3f4852] active:bg-[#f4f6f7]"
+            onClick={onAddSubQuestion}
+            type="button"
+          >
+            <Plus className="h-[20px] w-[20px]" />
+            子题
+          </button>
+          <span className="text-[18px] leading-none text-[#9aa3ad]">请核对子题题型</span>
+        </div>
+        <div className="grid gap-[12px]">
+          {question.subQuestions.map((subQuestion, index) => (
+            <div key={subQuestion.id} className="flex min-h-[44px] items-center gap-[12px]">
+              <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-[#b8c0c8] text-[17px] leading-none text-[#68727d]">
+                {index + 1}
+              </span>
+              <QuestionTypeSelect
+                onChange={(value) => onSubQuestionTypeChange(subQuestion.id, value)}
+                value={subQuestion.questionType}
+              />
+              {subQuestion.questionType === 'single_choice' || subQuestion.questionType === 'multiple_choice' ? (
+                <span className="text-[18px] leading-none text-[#8b949e]">选项数：{subQuestion.optionCount}</span>
+              ) : null}
+              {subQuestion.questionType === 'fill_blank' ? (
+                <span className="text-[18px] leading-none text-[#8b949e]">空数：{subQuestion.blankCount}</span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return <div className="text-[18px] leading-none text-[#9aa3ad]">问答题无需设置作答项</div>;
+}
+
+function TabletOcrQuestionReviewPage({
+  boxes,
+  materialPages,
+  onBackToSelection,
+  onExit,
+  subject,
+}: {
+  boxes: RecognitionBox[];
+  materialPages: MaterialPage[];
+  onBackToSelection: () => void;
+  onExit: () => void;
+  subject: string;
+}) {
+  const [globalMode, setGlobalMode] = useState<ReviewDisplayMode>('recognition');
+  const [questions, setQuestions] = useState<ReviewQuestion[]>(() => createInitialReviewQuestions(boxes, 'recognition'));
+  const [activeQuestionId, setActiveQuestionId] = useState(() => questions[0]?.id || '');
+  const [openMenuQuestionId, setOpenMenuQuestionId] = useState<string | null>(null);
+  const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
+  const [draftCrop, setDraftCrop] = useState<ReviewQuestion['crop'] | null>(null);
+  const [cropDrag, setCropDrag] = useState<{
+    containerRect: DOMRect;
+    startClientX: number;
+    startClientY: number;
+    startCrop: ReviewQuestion['crop'];
+  } | null>(null);
+  const leftBoxRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    if (!cropDrag) return undefined;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const widthDelta = ((event.clientX - cropDrag.startClientX) / cropDrag.containerRect.width) * cropDrag.startCrop.width;
+      const heightDelta = ((event.clientY - cropDrag.startClientY) / cropDrag.containerRect.height) * cropDrag.startCrop.height;
+
+      setDraftCrop({
+        ...cropDrag.startCrop,
+        width: clampPercent(cropDrag.startCrop.width + widthDelta, 5, 100 - cropDrag.startCrop.x),
+        height: clampPercent(cropDrag.startCrop.height + heightDelta, 3, 100 - cropDrag.startCrop.y),
+      });
+    };
+    const handlePointerUp = () => setCropDrag(null);
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [cropDrag]);
+
+  const pageByNumber = new Map(materialPages.map((page) => [page.pageNumber, page]));
+
+  const scrollLeftToQuestion = (questionId: string) => {
+    window.setTimeout(() => {
+      leftBoxRefs.current[questionId]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 0);
+  };
+
+  const handleSelectQuestion = (questionId: string) => {
+    setActiveQuestionId(questionId);
+    scrollLeftToQuestion(questionId);
+  };
+
+  const updateQuestion = (questionId: string, updater: (question: ReviewQuestion) => ReviewQuestion) => {
+    setQuestions((currentQuestions) => currentQuestions.map((question) => (
+      question.id === questionId ? updater(question) : question
+    )));
+  };
+
+  const handleGlobalModeChange = (mode: ReviewDisplayMode) => {
+    setGlobalMode(mode);
+    setQuestions((currentQuestions) => currentQuestions.map((question) => ({ ...question, viewMode: mode })));
+  };
+
+  const handleMoveQuestion = (questionId: string, direction: 'up' | 'down') => {
+    setQuestions((currentQuestions) => {
+      const index = currentQuestions.findIndex((question) => question.id === questionId);
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (index < 0 || targetIndex < 0 || targetIndex >= currentQuestions.length) return currentQuestions;
+
+      const nextQuestions = [...currentQuestions];
+      const [question] = nextQuestions.splice(index, 1);
+      nextQuestions.splice(targetIndex, 0, question);
+      return nextQuestions;
+    });
+    setOpenMenuQuestionId(null);
+  };
+
+  const handleDeleteQuestion = (questionId: string) => {
+    setQuestions((currentQuestions) => currentQuestions.filter((question) => question.id !== questionId));
+    setOpenMenuQuestionId(null);
+    if (activeQuestionId === questionId) {
+      const nextQuestion = questions.find((question) => question.id !== questionId);
+      setActiveQuestionId(nextQuestion?.id || '');
+    }
+  };
+
+  const handleStartCrop = (question: ReviewQuestion) => {
+    setActiveQuestionId(question.id);
+    setEditingCropQuestionId(question.id);
+    setDraftCrop(question.crop);
+    scrollLeftToQuestion(question.id);
+  };
+
+  const handleCancelCrop = () => {
+    setEditingCropQuestionId(null);
+    setDraftCrop(null);
+    setCropDrag(null);
+  };
+
+  const handleConfirmCrop = () => {
+    if (!editingCropQuestionId || !draftCrop) return;
+    updateQuestion(editingCropQuestionId, (question) => ({ ...question, crop: draftCrop }));
+    handleCancelCrop();
+  };
+
+  const renderLeftMaterialPage = (page: MaterialPage) => {
+    const frame = getMaterialPageFrameSize(page);
+    const pageQuestions = questions.filter((question) => question.pageNumber === page.pageNumber);
+
+    return (
+      <div
+        key={page.pageNumber}
+        className="mx-auto mb-[28px] w-fit rounded-[12px] border border-[#dfe6eb] bg-white p-[12px] shadow-[0_8px_22px_rgba(31,44,58,0.09)]"
+      >
+        <div className="relative bg-white" style={{ width: frame.width, height: frame.height }}>
+          <img alt="" className="h-full w-full object-fill" src={page.url} />
+          {pageQuestions.map((question) => (
+            <div
+              key={question.id}
+              ref={(node) => {
+                leftBoxRefs.current[question.id] = node;
+              }}
+              className={`absolute border-2 ${
+                question.id === activeQuestionId
+                  ? 'border-[#23bfb2] bg-[#ddf8f4]/32 shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
+                  : 'border-[#6ed7cd] bg-[#ddf8f4]/18'
+              }`}
+              style={{
+                height: `${question.crop.height}%`,
+                left: `${question.crop.x}%`,
+                top: `${question.crop.y}%`,
+                width: `${question.crop.width}%`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderRecognitionContent = (question: ReviewQuestion) => (
+    <div className="rounded-[8px] border border-[#e0e5e9] bg-white p-[18px]">
+      <div className="space-y-[12px]">
+        <div className="h-[15px] w-[86%] rounded-full bg-[#dce4ea]" />
+        <div className="h-[15px] w-[72%] rounded-full bg-[#dce4ea]" />
+        <div className="h-[15px] w-[58%] rounded-full bg-[#dce4ea]" />
+      </div>
+      <div className="mt-[18px] rounded-[7px] bg-[#f7fafb] px-[14px] py-[12px] text-[18px] leading-none text-[#8b949e]">
+        识别文本编辑区域将在下一个模式细化
+      </div>
+    </div>
+  );
+
+  const renderQuestionCard = (question: ReviewQuestion) => {
+    const page = pageByNumber.get(question.pageNumber);
+    const cropForDisplay = editingCropQuestionId === question.id && draftCrop ? draftCrop : question.crop;
+    const isActive = question.id === activeQuestionId;
+    const isCropEditing = editingCropQuestionId === question.id;
+
+    return (
+      <section
+        key={question.id}
+        className={`relative rounded-[10px] bg-white shadow-[0_6px_18px_rgba(31,44,58,0.06)] ${
+          isActive ? 'outline outline-[3px] outline-[#23bfb2]' : ''
+        }`}
+        onClick={() => handleSelectQuestion(question.id)}
+      >
+        <header className="flex h-[74px] items-center justify-between border-b border-[#edf0f2] px-[24px]">
+          <QuestionTypeSelect
+            onChange={(value) => {
+              updateQuestion(question.id, (currentQuestion) => ({
+                ...currentQuestion,
+                questionType: value,
+                subQuestions: value === 'material' && currentQuestion.subQuestions.length === 0
+                  ? [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'short_answer', optionCount: 4, blankCount: 1 }]
+                  : currentQuestion.subQuestions,
+              }));
+            }}
+            value={question.questionType}
+          />
+          <div className="flex items-center gap-[10px]">
+            <StepSegmentedControl
+              mode={question.viewMode}
+              onChange={(value) => {
+                updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, viewMode: value }));
+              }}
+            />
+            <button
+              aria-label="更多操作"
+              className="relative flex h-[42px] w-[42px] items-center justify-center rounded-full text-[#68727d] active:bg-[#f3f5f6]"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpenMenuQuestionId(openMenuQuestionId === question.id ? null : question.id);
+              }}
+              type="button"
+            >
+              <EllipsisVertical className="h-[24px] w-[24px]" />
+            </button>
+            <button
+              aria-label="删除题目"
+              className="flex h-[42px] w-[42px] items-center justify-center rounded-full text-[#68727d] active:bg-[#fff1f1] active:text-[#e45454]"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleDeleteQuestion(question.id);
+              }}
+              type="button"
+            >
+              <Trash2 className="h-[22px] w-[22px]" />
+            </button>
+          </div>
+        </header>
+
+        {openMenuQuestionId === question.id ? (
+          <div className="absolute right-[76px] top-[58px] z-20 w-[190px] overflow-hidden rounded-[10px] border border-[#dfe4e8] bg-white shadow-[0_16px_36px_rgba(31,44,58,0.18)]">
+            <button className="flex h-[48px] w-full items-center gap-[10px] px-[16px] text-[19px] text-[#3f4852] active:bg-[#f5f7f8]" onClick={() => handleMoveQuestion(question.id, 'up')} type="button">
+              <ArrowUp className="h-[20px] w-[20px]" />
+              上移
+            </button>
+            <button className="flex h-[48px] w-full items-center gap-[10px] px-[16px] text-[19px] text-[#3f4852] active:bg-[#f5f7f8]" onClick={() => handleMoveQuestion(question.id, 'down')} type="button">
+              <ArrowDown className="h-[20px] w-[20px]" />
+              下移
+            </button>
+            <button className="flex h-[48px] w-full items-center gap-[10px] px-[16px] text-[19px] text-[#3f4852] active:bg-[#f5f7f8]" onClick={() => setOpenMenuQuestionId(null)} type="button">
+              <Search className="h-[20px] w-[20px]" />
+              搜相似题
+            </button>
+          </div>
+        ) : null}
+
+        <div className="p-[24px]">
+          {question.viewMode === 'image' ? (
+            <CroppedQuestionImage
+              crop={cropForDisplay}
+              isEditing={isCropEditing}
+              onClick={() => handleStartCrop(question)}
+              onResizeStart={(event) => {
+                if (!draftCrop) return;
+                event.preventDefault();
+                event.stopPropagation();
+                setCropDrag({
+                  containerRect: event.currentTarget.parentElement?.getBoundingClientRect() || event.currentTarget.getBoundingClientRect(),
+                  startClientX: event.clientX,
+                  startClientY: event.clientY,
+                  startCrop: draftCrop,
+                });
+              }}
+              page={page}
+            />
+          ) : (
+            renderRecognitionContent(question)
+          )}
+
+          {isCropEditing ? (
+            <div className="mt-[14px] flex justify-end gap-[12px]">
+              <button
+                className="h-[40px] rounded-[7px] border border-[#d7dde3] bg-white px-[18px] text-[19px] leading-none text-[#3f4852] active:bg-[#f4f6f7]"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleCancelCrop();
+                }}
+                type="button"
+              >
+                取消
+              </button>
+              <button
+                className="inline-flex h-[40px] items-center gap-[8px] rounded-[7px] bg-[#23bfb2] px-[18px] text-[19px] font-medium leading-none text-white active:bg-[#12a99d]"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleConfirmCrop();
+                }}
+                type="button"
+              >
+                <Check className="h-[19px] w-[19px]" />
+                确认裁剪
+              </button>
+            </div>
+          ) : null}
+
+          <div className="mt-[18px]">
+            <AnswerConfigPanel
+              onAddSubQuestion={() => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  subQuestions: [
+                    ...currentQuestion.subQuestions,
+                    {
+                      id: `${currentQuestion.id}-sub-${Date.now()}`,
+                      questionType: 'short_answer',
+                      optionCount: 4,
+                      blankCount: 1,
+                    },
+                  ],
+                }));
+              }}
+              onBlankCountChange={(value) => {
+                updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, blankCount: value }));
+              }}
+              onOptionCountChange={(value) => {
+                updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, optionCount: value }));
+              }}
+              onSubQuestionTypeChange={(subQuestionId, value) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  subQuestions: currentQuestion.subQuestions.map((subQuestion) => (
+                    subQuestion.id === subQuestionId ? { ...subQuestion, questionType: value } : subQuestion
+                  )),
+                }));
+              }}
+              question={question}
+            />
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  return (
+    <div className="absolute inset-0 z-30 bg-[#eef2f5]">
+      <header className="absolute left-0 top-0 h-[88px] w-full border-b border-[#e3e7eb] bg-white">
+        <button
+          aria-label="返回"
+          className="absolute left-[28px] top-[20px] flex h-[50px] items-center gap-[6px] rounded-[8px] pr-[16px] text-[#202124] active:bg-[#f3f5f6]"
+          onClick={onBackToSelection}
+          type="button"
+        >
+          <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
+          <span className="text-[28px] font-semibold leading-none">核对识别结果</span>
+        </button>
+        <div className="absolute left-[344px] top-[20px] flex h-[48px] items-center gap-[12px] rounded-full bg-[#eef1f3] p-[4px]">
+          <button
+            className={`h-[40px] rounded-full px-[22px] text-[20px] font-medium leading-none ${
+              globalMode === 'recognition' ? 'bg-white text-[#202124] shadow-sm' : 'text-[#68727d]'
+            }`}
+            onClick={() => handleGlobalModeChange('recognition')}
+            type="button"
+          >
+            识别模式
+          </button>
+          <button
+            className={`h-[40px] rounded-full px-[22px] text-[20px] font-medium leading-none ${
+              globalMode === 'image' ? 'bg-white text-[#202124] shadow-sm' : 'text-[#68727d]'
+            }`}
+            onClick={() => handleGlobalModeChange('image')}
+            type="button"
+          >
+            图片模式
+          </button>
+        </div>
+        <div className="absolute right-[188px] top-[24px] rounded-full bg-[#e7f7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#2fac76]">
+          {subject}
+        </div>
+        <button
+          className="absolute right-[40px] top-[20px] h-[48px] rounded-[8px] bg-[#23bfb2] px-[24px] text-[20px] font-medium leading-none text-white active:bg-[#12a99d]"
+          onClick={onExit}
+          type="button"
+        >
+          加入试卷
+        </button>
+      </header>
+
+      <main className="absolute bottom-0 left-0 right-0 top-[88px] flex">
+        <section className="relative h-full w-[1030px] border-r border-[#dfe5ea] bg-[#f8fafb]">
+          <div className="absolute inset-0 overflow-y-auto px-[28px] py-[24px]">
+            {materialPages.map(renderLeftMaterialPage)}
+          </div>
+        </section>
+        <section className="relative flex-1 bg-[#eef2f5]">
+          <div className="absolute left-[28px] right-[28px] top-[24px] flex items-center justify-between">
+            <div>
+              <h2 className="text-[27px] font-semibold leading-none text-[#202124]">仅题目核对</h2>
+              <p className="mt-[11px] text-[19px] leading-none text-[#7b838c]">
+                单击右侧题目框，左侧自动定位对应切题区域
+              </p>
+            </div>
+            <span className="rounded-full bg-white px-[18px] py-[10px] text-[19px] leading-none text-[#68727d] shadow-sm">
+              共 {questions.length} 题
+            </span>
+          </div>
+          <div className="absolute bottom-0 left-[28px] right-[28px] top-[104px] overflow-y-auto pb-[36px]">
+            {questions.length > 0 ? (
+              <div className="space-y-[22px]">{questions.map(renderQuestionCard)}</div>
+            ) : (
+              <div className="flex h-[360px] items-center justify-center rounded-[12px] border border-dashed border-[#d7dde3] bg-white text-[22px] text-[#8b949e]">
+                暂无可核对题目
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function TabletOcrContentSelectionPage({
   images,
   mode,
@@ -1909,6 +2616,18 @@ function TabletOcrContentSelectionPage({
       setBoxes([]);
     }
   };
+
+  if (hasStarted) {
+    return (
+      <TabletOcrQuestionReviewPage
+        boxes={boxes}
+        materialPages={materialPages}
+        onBackToSelection={() => setHasStarted(false)}
+        onExit={onBack}
+        subject={subject}
+      />
+    );
+  }
 
   const renderMaterialPage = (page: MaterialPage, variant: 'question' | 'answer') => {
     const frame = getMaterialPageFrameSize(page);
