@@ -1569,11 +1569,19 @@ function AddBoxModeTipDialog({
   return (
     <div className="absolute inset-0 z-50 bg-black/45">
       <section className="absolute left-1/2 top-1/2 w-[640px] -translate-x-1/2 -translate-y-1/2 rounded-[18px] bg-white px-[44px] py-[38px] shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
+        <button
+          aria-label="关闭识别框添加提示"
+          className="absolute right-[18px] top-[18px] flex h-[34px] w-[34px] items-center justify-center rounded-full text-[#68727d] active:bg-[#f3f5f6] active:text-[#202124]"
+          onClick={onConfirm}
+          type="button"
+        >
+          <X className="h-[22px] w-[22px] stroke-[2.4]" />
+        </button>
         <h3 className="text-[28px] font-semibold leading-none text-[#202124]">
-          添加识别框提示
+          识别框添加提示
         </h3>
         <p className="mt-[24px] text-[21px] leading-[34px] text-[#3f4852]">
-          启用后，您可以在需要添加框的题目位置点击，即可增加空白框（无需使用时，再次点击按钮，关闭该功能即可）。
+          启用后，您可在需框选的题目位置单击屏幕，即可增加识别框（无需使用时，再次点击按钮，即可关闭该功能）。
         </p>
         <div className="mt-[34px] flex justify-end">
           <button
