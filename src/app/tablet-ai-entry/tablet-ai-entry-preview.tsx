@@ -20,9 +20,12 @@ import {
   Mic2,
   Minus,
   Plus,
+  RotateCw,
   Search,
   SendHorizonal,
   Trash2,
+  ZoomIn,
+  ZoomOut,
   X,
 } from 'lucide-react';
 import { getValidQuestionTypes } from '@/lib/ai-recognizer';
@@ -3227,18 +3230,6 @@ function TabletOcrQuestionReviewPage({
           <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
           <span className="text-[28px] font-semibold leading-none">核对识别结果</span>
         </button>
-        <button
-          className={`absolute left-[330px] top-[20px] inline-flex h-[48px] items-center gap-[8px] rounded-[8px] border px-[18px] text-[20px] font-medium leading-none ${
-            isReviewAddBoxMode
-              ? 'border-[#23bfb2] bg-[#e1f8f5] text-[#0f9489]'
-              : 'border-[#d7dde3] bg-white text-[#202124] active:bg-[#f3f5f6]'
-          }`}
-          onClick={() => setIsReviewAddBoxMode((currentMode) => !currentMode)}
-          type="button"
-        >
-          <Plus className="h-[22px] w-[22px]" />
-          添加识别框
-        </button>
         <div className="absolute right-[188px] top-[24px] rounded-full bg-[#e7f7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#2fac76]">
           {subject}
         </div>
@@ -3264,7 +3255,49 @@ function TabletOcrQuestionReviewPage({
           </button>
         ) : null}
         <section className="relative h-full w-[1030px] border-r border-[#dfe5ea] bg-[#f8fafb]">
-          <div className="absolute inset-0 overflow-y-auto px-[28px] py-[24px]">
+          <div className="absolute left-0 right-0 top-0 z-10 flex h-[66px] items-center gap-[22px] border-b border-[#e3e7eb] bg-white px-[28px]">
+            <button
+              aria-label="旋转图片"
+              className="inline-flex h-[42px] items-center gap-[8px] rounded-[7px] px-[12px] text-[20px] leading-none text-[#3f4852] active:bg-[#f3f5f6]"
+              onClick={() => undefined}
+              type="button"
+            >
+              <RotateCw className="h-[22px] w-[22px]" />
+              旋转
+            </button>
+            <div className="inline-flex h-[42px] items-center gap-[10px] rounded-[7px] px-[8px] text-[20px] leading-none text-[#3f4852]">
+              <button
+                aria-label="缩小图片"
+                className="flex h-[34px] w-[34px] items-center justify-center rounded-full active:bg-[#f3f5f6]"
+                onClick={() => undefined}
+                type="button"
+              >
+                <ZoomOut className="h-[22px] w-[22px]" />
+              </button>
+              <span className="min-w-[58px] text-center">100%</span>
+              <button
+                aria-label="放大图片"
+                className="flex h-[34px] w-[34px] items-center justify-center rounded-full active:bg-[#f3f5f6]"
+                onClick={() => undefined}
+                type="button"
+              >
+                <ZoomIn className="h-[22px] w-[22px]" />
+              </button>
+            </div>
+            <button
+              className={`inline-flex h-[42px] items-center gap-[8px] rounded-[7px] border px-[16px] text-[20px] font-medium leading-none ${
+                isReviewAddBoxMode
+                  ? 'border-[#23bfb2] bg-[#e1f8f5] text-[#0f9489]'
+                  : 'border-[#d7dde3] bg-white text-[#3f4852] active:bg-[#f3f5f6]'
+              }`}
+              onClick={() => setIsReviewAddBoxMode((currentMode) => !currentMode)}
+              type="button"
+            >
+              <Plus className="h-[22px] w-[22px]" />
+              添加识别框
+            </button>
+          </div>
+          <div className="absolute bottom-0 left-0 right-0 top-[66px] overflow-y-auto px-[28px] py-[24px]">
             {materialPages.map(renderLeftMaterialPage)}
           </div>
         </section>
