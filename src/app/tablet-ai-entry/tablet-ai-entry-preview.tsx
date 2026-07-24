@@ -32,7 +32,6 @@ const OCR_BOX_SELECT_ICON_SAFE_WIDTH = 24;
 const MATERIAL_PAGE_MAX_WIDTH = 890;
 const MATERIAL_PAGE_MAX_HEIGHT = 830;
 const REVIEW_QUESTION_IMAGE_MAX_WIDTH = 760;
-const REVIEW_QUESTION_IMAGE_SOURCE_SCALE = 1.12;
 
 type SelectedImage = {
   name: string;
@@ -47,6 +46,7 @@ type OcrDetectStatus = 'loading' | 'ready' | 'failed';
 type CaptureCloseTarget = 'mode' | 'content' | 'upload' | null;
 type ReviewDisplayMode = 'recognition' | 'image';
 type ReviewQuestionType = 'single_choice' | 'multiple_choice' | 'fill_blank' | 'short_answer' | 'material' | 'judge';
+type CropDragAction = 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se' | 'resize-n' | 'resize-s' | 'resize-w' | 'resize-e';
 
 type MaterialPage = SelectedImage & {
   pageNumber: number;
@@ -67,6 +67,7 @@ type RecognitionBox = {
 };
 
 type TabletConfirmAction = 'replace' | 'clear' | null;
+type CropRegion = { x: number; y: number; width: number; height: number };
 
 type ReviewQuestion = {
   id: string;
@@ -87,6 +88,8 @@ type ReviewQuestion = {
     blankCount: number;
   }>;
   viewMode: ReviewDisplayMode;
+  croppedImageData?: string;
+  userCroppedImageData?: string;
 };
 
 const SINGLE_SUBJECT = '高中数学';
@@ -1067,6 +1070,97 @@ async function detectMaterialBoxes(pages: MaterialPage[]) {
   return [];
 }
 
+function cropImageByPixels(
+  imageData: string,
+  region: { x: number; y: number; width: number; height: number },
+) {
+  return new Promise<{ imageData: string; width: number; height: number }>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const sourceX = clampPercent(region.x, 0, image.naturalWidth - 1);
+      const sourceY = clampPercent(region.y, 0, image.naturalHeight - 1);
+      const sourceWidth = clampPercent(region.width, 1, image.naturalWidth - sourceX);
+      const sourceHeight = clampPercent(region.height, 1, image.naturalHeight - sourceY);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(sourceWidth);
+      canvas.height = Math.round(sourceHeight);
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        reject(new Error('无法创建 Canvas 上下文'));
+        return;
+      }
+
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+
+      resolve({
+        imageData: canvas.toDataURL('image/png'),
+        width: canvas.width,
+        height: canvas.height,
+      });
+    };
+    image.onerror = () => reject(new Error('图片裁剪失败'));
+    image.src = imageData;
+  });
+}
+
+function cropMaterialQuestionImage(page: MaterialPage, crop: ReviewQuestion['crop']) {
+  return cropImageByPixels(page.imageData, {
+    x: Math.round((crop.x / 100) * page.naturalWidth),
+    y: Math.round((crop.y / 100) * page.naturalHeight),
+    width: Math.round((crop.width / 100) * page.naturalWidth),
+    height: Math.round((crop.height / 100) * page.naturalHeight),
+  });
+}
+
+function cropRenderedImageRegion(
+  imageData: string,
+  displaySize: { width: number; height: number },
+  region: CropRegion,
+) {
+  return new Promise<string>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const scaleX = image.naturalWidth / displaySize.width;
+      const scaleY = image.naturalHeight / displaySize.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(region.width * scaleX);
+      canvas.height = Math.round(region.height * scaleY);
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        reject(new Error('无法创建 Canvas 上下文'));
+        return;
+      }
+
+      context.drawImage(
+        image,
+        region.x * scaleX,
+        region.y * scaleY,
+        region.width * scaleX,
+        region.height * scaleY,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+      resolve(canvas.toDataURL('image/png'));
+    };
+    image.onerror = () => reject(new Error('图片裁剪失败'));
+    image.src = imageData;
+  });
+}
+
 function CameraGrid() {
   return (
     <>
@@ -1776,21 +1870,21 @@ function CountStepper({
 }
 
 function CroppedQuestionImage({
-  crop,
+  cropRegion,
+  imageData,
   isEditing,
   onClick,
-  onMoveStart,
-  onResizeStart,
-  page,
+  onCropDragStart,
+  onImageLoad,
 }: {
-  crop: ReviewQuestion['crop'];
+  cropRegion: CropRegion | null;
+  imageData: string | undefined;
   isEditing: boolean;
   onClick: () => void;
-  onMoveStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
-  onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
-  page: MaterialPage | undefined;
+  onCropDragStart: (event: ReactPointerEvent, action: CropDragAction) => void;
+  onImageLoad: (width: number, height: number) => void;
 }) {
-  if (!page) {
+  if (!imageData) {
     return (
       <div
         className="flex h-[204px] w-full items-center justify-center rounded-[8px] border border-dashed border-[#d7dde3] bg-[#f8fafb] text-[20px] text-[#8b949e]"
@@ -1806,16 +1900,7 @@ function CroppedQuestionImage({
     );
   }
 
-  const frame = getMaterialPageFrameSize(page);
-  const cropAspectRatio = (page.naturalHeight * crop.height) / (page.naturalWidth * crop.width);
-  const imageDisplayWidth = Math.min(
-    REVIEW_QUESTION_IMAGE_MAX_WIDTH,
-    Math.max(240, frame.width * (crop.width / 100) * REVIEW_QUESTION_IMAGE_SOURCE_SCALE),
-  );
-  const imageDisplayHeight = Math.max(108, imageDisplayWidth * cropAspectRatio);
-  const fullImageWidth = imageDisplayWidth * (100 / crop.width);
-  const fullImageHeight = imageDisplayHeight * (100 / crop.height);
-  const cropHandleClass = 'absolute flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border-[2px] border-white bg-[#2f80ed] shadow-[0_1px_5px_rgba(47,128,237,0.42)]';
+  const cropHandleClass = 'absolute h-[14px] w-[14px] rounded-full border-[2px] border-[#2f80ed] bg-white shadow-[0_1px_5px_rgba(47,128,237,0.32)]';
 
   return (
     <div
@@ -1827,44 +1912,45 @@ function CroppedQuestionImage({
       role="button"
       tabIndex={0}
     >
-      <div
-        className={`relative overflow-visible bg-white ${isEditing ? 'cursor-move' : ''}`}
-        onPointerDown={isEditing ? onMoveStart : undefined}
-        style={{
-          height: imageDisplayHeight,
-          width: imageDisplayWidth,
-        }}
-      >
+      <div className="relative max-w-full overflow-visible bg-white">
         <img
           alt=""
-          className="absolute max-w-none object-fill"
-          src={page.url}
-          style={{
-            height: fullImageHeight,
-            left: -fullImageWidth * (crop.x / 100),
-            top: -fullImageHeight * (crop.y / 100),
-            width: fullImageWidth,
+          className="block h-auto max-w-full"
+          draggable={false}
+          onLoad={(event) => {
+            onImageLoad(event.currentTarget.clientWidth, event.currentTarget.clientHeight);
           }}
+          src={imageData}
+          style={{ width: REVIEW_QUESTION_IMAGE_MAX_WIDTH }}
         />
-        {isEditing ? (
+        {isEditing && cropRegion ? (
           <>
-            <div className="absolute inset-0 border-[2px] border-[#2f80ed]" />
-            <div className={`${cropHandleClass} left-[-9px] top-[-9px]`} />
-            <div className={`${cropHandleClass} left-1/2 top-[-9px] -translate-x-1/2`} />
-            <div className={`${cropHandleClass} right-[-9px] top-[-9px]`} />
-            <div className={`${cropHandleClass} left-[-9px] top-1/2 -translate-y-1/2`} />
-            <div className={`${cropHandleClass} right-[-9px] top-1/2 -translate-y-1/2`} />
-            <div className={`${cropHandleClass} bottom-[-9px] left-[-9px]`} />
-            <div className={`${cropHandleClass} bottom-[-9px] left-1/2 -translate-x-1/2`} />
-            <button
-              aria-label="调整裁剪范围"
-              className={`${cropHandleClass} bottom-[-9px] right-[-9px]`}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={onResizeStart}
-              type="button"
-            />
-            <div className="absolute left-1/2 top-[-42px] h-[34px] w-px -translate-x-1/2 bg-[#2f80ed]" />
-            <div className="absolute left-1/2 top-[-58px] h-[22px] w-[22px] -translate-x-1/2 rounded-full border-[2px] border-white bg-[#2f80ed] shadow-[0_1px_5px_rgba(47,128,237,0.42)]" />
+            <div className="pointer-events-none absolute inset-0 bg-black/28" />
+            <div
+              className="absolute cursor-move border-[2px] border-white shadow-[0_0_0_1px_rgba(47,128,237,0.9),0_8px_24px_rgba(0,0,0,0.16)]"
+              onPointerDown={(event) => onCropDragStart(event, 'move')}
+              style={{
+                height: cropRegion.height,
+                left: cropRegion.x,
+                top: cropRegion.y,
+                width: cropRegion.width,
+              }}
+            >
+              <div className="absolute inset-0 pointer-events-none">
+                <div className="absolute bottom-0 left-1/3 top-0 w-px bg-white/36" />
+                <div className="absolute bottom-0 left-2/3 top-0 w-px bg-white/36" />
+                <div className="absolute left-0 right-0 top-1/3 h-px bg-white/36" />
+                <div className="absolute left-0 right-0 top-2/3 h-px bg-white/36" />
+              </div>
+              <div className={`${cropHandleClass} -left-[7px] -top-[7px] cursor-nw-resize`} onPointerDown={(event) => onCropDragStart(event, 'resize-nw')} />
+              <div className={`${cropHandleClass} -right-[7px] -top-[7px] cursor-ne-resize`} onPointerDown={(event) => onCropDragStart(event, 'resize-ne')} />
+              <div className={`${cropHandleClass} -bottom-[7px] -left-[7px] cursor-sw-resize`} onPointerDown={(event) => onCropDragStart(event, 'resize-sw')} />
+              <div className={`${cropHandleClass} -bottom-[7px] -right-[7px] cursor-se-resize`} onPointerDown={(event) => onCropDragStart(event, 'resize-se')} />
+              <div className="absolute -top-[5px] left-1/2 h-[10px] w-[28px] -translate-x-1/2 cursor-n-resize rounded-full border border-[#2f80ed] bg-white" onPointerDown={(event) => onCropDragStart(event, 'resize-n')} />
+              <div className="absolute -bottom-[5px] left-1/2 h-[10px] w-[28px] -translate-x-1/2 cursor-s-resize rounded-full border border-[#2f80ed] bg-white" onPointerDown={(event) => onCropDragStart(event, 'resize-s')} />
+              <div className="absolute -left-[5px] top-1/2 h-[28px] w-[10px] -translate-y-1/2 cursor-w-resize rounded-full border border-[#2f80ed] bg-white" onPointerDown={(event) => onCropDragStart(event, 'resize-w')} />
+              <div className="absolute -right-[5px] top-1/2 h-[28px] w-[10px] -translate-y-1/2 cursor-e-resize rounded-full border border-[#2f80ed] bg-white" onPointerDown={(event) => onCropDragStart(event, 'resize-e')} />
+            </div>
           </>
         ) : null}
       </div>
@@ -1951,40 +2037,121 @@ function TabletOcrQuestionReviewPage({
   const [activeQuestionId, setActiveQuestionId] = useState(() => questions[0]?.id || '');
   const [openMenuQuestionId, setOpenMenuQuestionId] = useState<string | null>(null);
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
-  const [draftCrop, setDraftCrop] = useState<ReviewQuestion['crop'] | null>(null);
+  const [cropRegion, setCropRegion] = useState<CropRegion | null>(null);
   const [cropDrag, setCropDrag] = useState<{
-    action: 'move' | 'resize';
-    containerRect: DOMRect;
+    action: CropDragAction;
     startClientX: number;
     startClientY: number;
-    startCrop: ReviewQuestion['crop'];
+    startRegion: CropRegion;
   } | null>(null);
   const leftBoxRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const imageDisplaySizesRef = useRef<Map<string, { width: number; height: number }>>(new Map());
   const hasDraggedCropRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pageByNumberForCrop = new Map(materialPages.map((page) => [page.pageNumber, page]));
+
+    async function buildCroppedImages() {
+      const missingQuestions = questions.filter((question) => !question.croppedImageData);
+      if (missingQuestions.length === 0) return;
+
+      const croppedEntries = await Promise.all(missingQuestions.map(async (question) => {
+        const page = pageByNumberForCrop.get(question.pageNumber);
+        if (!page) return null;
+
+        const cropped = await cropMaterialQuestionImage(page, question.crop);
+        return {
+          id: question.id,
+          imageData: cropped.imageData,
+        };
+      }));
+
+      if (cancelled) return;
+
+      setQuestions((currentQuestions) => currentQuestions.map((question) => {
+        const croppedEntry = croppedEntries.find((entry) => entry?.id === question.id);
+        return croppedEntry ? { ...question, croppedImageData: croppedEntry.imageData } : question;
+      }));
+    }
+
+    void buildCroppedImages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [materialPages, questions]);
 
   useEffect(() => {
     if (!cropDrag) return undefined;
 
     const handlePointerMove = (event: PointerEvent) => {
-      const dx = ((event.clientX - cropDrag.startClientX) / cropDrag.containerRect.width) * cropDrag.startCrop.width;
-      const dy = ((event.clientY - cropDrag.startClientY) / cropDrag.containerRect.height) * cropDrag.startCrop.height;
+      const size = editingCropQuestionId ? imageDisplaySizesRef.current.get(editingCropQuestionId) : null;
+      if (!size) return;
+
+      const dx = event.clientX - cropDrag.startClientX;
+      const dy = event.clientY - cropDrag.startClientY;
+      const minSize = 30;
+      let nextX = cropDrag.startRegion.x;
+      let nextY = cropDrag.startRegion.y;
+      let nextWidth = cropDrag.startRegion.width;
+      let nextHeight = cropDrag.startRegion.height;
+
       if (Math.abs(event.clientX - cropDrag.startClientX) > 3 || Math.abs(event.clientY - cropDrag.startClientY) > 3) {
         hasDraggedCropRef.current = true;
       }
 
-      if (cropDrag.action === 'move') {
-        setDraftCrop({
-          ...cropDrag.startCrop,
-          x: clampPercent(cropDrag.startCrop.x + dx, 0, 100 - cropDrag.startCrop.width),
-          y: clampPercent(cropDrag.startCrop.y + dy, 0, 100 - cropDrag.startCrop.height),
-        });
-        return;
+      switch (cropDrag.action) {
+        case 'move':
+          nextX = clampPercent(cropDrag.startRegion.x + dx, 0, size.width - nextWidth);
+          nextY = clampPercent(cropDrag.startRegion.y + dy, 0, size.height - nextHeight);
+          break;
+        case 'resize-nw':
+          nextWidth = Math.max(minSize, cropDrag.startRegion.width - dx);
+          nextHeight = Math.max(minSize, cropDrag.startRegion.height - dy);
+          nextX = cropDrag.startRegion.x + (cropDrag.startRegion.width - nextWidth);
+          nextY = cropDrag.startRegion.y + (cropDrag.startRegion.height - nextHeight);
+          break;
+        case 'resize-ne':
+          nextWidth = Math.max(minSize, cropDrag.startRegion.width + dx);
+          nextHeight = Math.max(minSize, cropDrag.startRegion.height - dy);
+          nextY = cropDrag.startRegion.y + (cropDrag.startRegion.height - nextHeight);
+          break;
+        case 'resize-sw':
+          nextWidth = Math.max(minSize, cropDrag.startRegion.width - dx);
+          nextHeight = Math.max(minSize, cropDrag.startRegion.height + dy);
+          nextX = cropDrag.startRegion.x + (cropDrag.startRegion.width - nextWidth);
+          break;
+        case 'resize-se':
+          nextWidth = Math.max(minSize, cropDrag.startRegion.width + dx);
+          nextHeight = Math.max(minSize, cropDrag.startRegion.height + dy);
+          break;
+        case 'resize-n':
+          nextHeight = Math.max(minSize, cropDrag.startRegion.height - dy);
+          nextY = cropDrag.startRegion.y + (cropDrag.startRegion.height - nextHeight);
+          break;
+        case 'resize-s':
+          nextHeight = Math.max(minSize, cropDrag.startRegion.height + dy);
+          break;
+        case 'resize-w':
+          nextWidth = Math.max(minSize, cropDrag.startRegion.width - dx);
+          nextX = cropDrag.startRegion.x + (cropDrag.startRegion.width - nextWidth);
+          break;
+        case 'resize-e':
+          nextWidth = Math.max(minSize, cropDrag.startRegion.width + dx);
+          break;
       }
 
-      setDraftCrop({
-        ...cropDrag.startCrop,
-        width: clampPercent(cropDrag.startCrop.width + dx, 5, 100 - cropDrag.startCrop.x),
-        height: clampPercent(cropDrag.startCrop.height + dy, 3, 100 - cropDrag.startCrop.y),
+      nextX = clampPercent(nextX, 0, size.width - minSize);
+      nextY = clampPercent(nextY, 0, size.height - minSize);
+      nextWidth = clampPercent(nextWidth, minSize, size.width - nextX);
+      nextHeight = clampPercent(nextHeight, minSize, size.height - nextY);
+
+      setCropRegion({
+        height: Math.round(nextHeight),
+        width: Math.round(nextWidth),
+        x: Math.round(nextX),
+        y: Math.round(nextY),
       });
     };
     const handlePointerUp = () => setCropDrag(null);
@@ -1997,8 +2164,6 @@ function TabletOcrQuestionReviewPage({
       window.removeEventListener('pointerup', handlePointerUp);
     };
   }, [cropDrag]);
-
-  const pageByNumber = new Map(materialPages.map((page) => [page.pageNumber, page]));
 
   const scrollLeftToQuestion = (questionId: string) => {
     window.setTimeout(() => {
@@ -2058,22 +2223,50 @@ function TabletOcrQuestionReviewPage({
       return;
     }
 
+    const displaySize = imageDisplaySizesRef.current.get(question.id);
     setActiveQuestionId(question.id);
     setEditingCropQuestionId(question.id);
-    setDraftCrop(question.crop);
+    setCropRegion(displaySize ? {
+      height: Math.round(displaySize.height * 0.72),
+      width: displaySize.width,
+      x: 0,
+      y: 0,
+    } : null);
     scrollLeftToQuestion(question.id);
   };
 
   const handleCancelCrop = () => {
     setEditingCropQuestionId(null);
-    setDraftCrop(null);
+    setCropRegion(null);
     setCropDrag(null);
   };
 
-  const handleConfirmCrop = () => {
-    if (!editingCropQuestionId || !draftCrop) return;
-    updateQuestion(editingCropQuestionId, (question) => ({ ...question, crop: draftCrop }));
+  const handleConfirmCrop = async () => {
+    if (!editingCropQuestionId || !cropRegion) return;
+    const question = questions.find((currentQuestion) => currentQuestion.id === editingCropQuestionId);
+    const displaySize = imageDisplaySizesRef.current.get(editingCropQuestionId);
+    if (!question?.croppedImageData || !displaySize) return;
+
+    const nextImageData = await cropRenderedImageRegion(question.croppedImageData, displaySize, cropRegion);
+    updateQuestion(editingCropQuestionId, (currentQuestion) => ({
+      ...currentQuestion,
+      userCroppedImageData: nextImageData,
+    }));
     handleCancelCrop();
+  };
+
+  const handleQuestionImageLoad = (questionId: string, width: number, height: number) => {
+    if (!width || !height) return;
+    imageDisplaySizesRef.current.set(questionId, { width, height });
+
+    if (editingCropQuestionId === questionId && !cropRegion) {
+      setCropRegion({
+        height: Math.round(height * 0.72),
+        width,
+        x: 0,
+        y: 0,
+      });
+    }
   };
 
   const renderLeftMaterialPage = (page: MaterialPage) => {
@@ -2125,10 +2318,11 @@ function TabletOcrQuestionReviewPage({
   );
 
   const renderQuestionCard = (question: ReviewQuestion) => {
-    const page = pageByNumber.get(question.pageNumber);
-    const cropForDisplay = editingCropQuestionId === question.id && draftCrop ? draftCrop : question.crop;
     const isActive = question.id === activeQuestionId;
     const isCropEditing = editingCropQuestionId === question.id;
+    const questionImageData = isCropEditing
+      ? question.croppedImageData
+      : question.userCroppedImageData || question.croppedImageData;
 
     return (
       <section
@@ -2205,36 +2399,23 @@ function TabletOcrQuestionReviewPage({
         <div className="p-[24px]">
           {question.viewMode === 'image' ? (
             <CroppedQuestionImage
-              crop={cropForDisplay}
+              cropRegion={isCropEditing ? cropRegion : null}
+              imageData={questionImageData}
               isEditing={isCropEditing}
               onClick={() => handleStartCrop(question)}
-              onMoveStart={(event) => {
-                if (!draftCrop) return;
+              onCropDragStart={(event, action) => {
+                if (!cropRegion) return;
                 event.preventDefault();
                 event.stopPropagation();
                 setCropDrag({
-                  action: 'move',
-                  containerRect: event.currentTarget.getBoundingClientRect(),
+                  action,
                   startClientX: event.clientX,
                   startClientY: event.clientY,
-                  startCrop: draftCrop,
+                  startRegion: cropRegion,
                 });
                 hasDraggedCropRef.current = false;
               }}
-              onResizeStart={(event) => {
-                if (!draftCrop) return;
-                event.preventDefault();
-                event.stopPropagation();
-                setCropDrag({
-                  action: 'resize',
-                  containerRect: event.currentTarget.parentElement?.getBoundingClientRect() || event.currentTarget.getBoundingClientRect(),
-                  startClientX: event.clientX,
-                  startClientY: event.clientY,
-                  startCrop: draftCrop,
-                });
-                hasDraggedCropRef.current = false;
-              }}
-              page={page}
+              onImageLoad={(width, height) => handleQuestionImageLoad(question.id, width, height)}
             />
           ) : (
             renderRecognitionContent(question)
@@ -2256,7 +2437,7 @@ function TabletOcrQuestionReviewPage({
                 className="inline-flex h-[40px] items-center gap-[8px] rounded-[7px] bg-[#23bfb2] px-[18px] text-[19px] font-medium leading-none text-white active:bg-[#12a99d]"
                 onClick={(event) => {
                   event.stopPropagation();
-                  handleConfirmCrop();
+                  void handleConfirmCrop();
                 }}
                 type="button"
               >
