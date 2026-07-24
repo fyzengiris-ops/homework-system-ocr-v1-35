@@ -2178,7 +2178,7 @@ function TabletOcrQuestionReviewPage({
   const [globalMode, setGlobalMode] = useState<ReviewDisplayMode>('recognition');
   const [reviewBoxes, setReviewBoxes] = useState<RecognitionBox[]>(initialReviewBoxes);
   const [questions, setQuestions] = useState<ReviewQuestion[]>(() => createInitialReviewQuestions(initialSelectedBoxes, 'recognition'));
-  const [activeQuestionId, setActiveQuestionId] = useState(() => questions[0]?.id || '');
+  const [activeQuestionId, setActiveQuestionId] = useState('');
   const [openMenuQuestionId, setOpenMenuQuestionId] = useState<string | null>(null);
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
   const [recognitionStatus, setRecognitionStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
@@ -2516,6 +2516,11 @@ function TabletOcrQuestionReviewPage({
   };
 
   const handleSelectQuestion = (questionId: string) => {
+    if (activeQuestionId === questionId) {
+      setActiveQuestionId('');
+      return;
+    }
+
     setActiveQuestionId(questionId);
     scrollLeftToQuestion(questionId);
   };
@@ -2555,8 +2560,7 @@ function TabletOcrQuestionReviewPage({
     });
     setOpenMenuQuestionId(null);
     if (activeQuestionId === questionId) {
-      const nextQuestion = questions.find((question) => question.id !== questionId);
-      setActiveQuestionId(nextQuestion?.id || '');
+      setActiveQuestionId('');
     }
   };
 
@@ -2573,7 +2577,7 @@ function TabletOcrQuestionReviewPage({
       nextIds.delete(boxId);
       return nextIds;
     });
-    setActiveQuestionId((currentId) => (currentId === boxId ? questions[0]?.id || '' : currentId));
+    setActiveQuestionId((currentId) => (currentId === boxId ? '' : currentId));
   };
 
   const handleToggleReviewBoxSelection = (box: RecognitionBox) => {
@@ -2670,7 +2674,6 @@ function TabletOcrQuestionReviewPage({
     event.preventDefault();
     event.stopPropagation();
     hasMovedReviewBoxRef.current = false;
-    setActiveQuestionId(box.id);
     setReviewBoxDrag({
       id: box.id,
       action,
@@ -2858,13 +2861,13 @@ function TabletOcrQuestionReviewPage({
                   isActive
                     ? 'border-2 border-[#23bfb2] bg-[#ddf8f4]/38 shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
                     : isQueued
-                      ? 'border-2 border-[#f2a93b] bg-[#fff4df]/32'
+                      ? 'border-2 border-[#26c9bc] bg-[#ddf8f4]/25'
                       : 'border-0 bg-[#202124]/10'
                 }`}
                 onClick={(event) => {
                   event.stopPropagation();
                   if (!hasMovedReviewBoxRef.current) {
-                    setActiveQuestionId(box.id);
+                    setActiveQuestionId((currentId) => (currentId === box.id ? '' : box.id));
                   }
                 }}
                 onPointerDown={(event) => startReviewBoxDrag(event, box, 'move')}
@@ -2892,7 +2895,7 @@ function TabletOcrQuestionReviewPage({
                   ✓
                 </button>
                 {isQueued ? (
-                  <span className="absolute right-[32px] top-[4px] rounded-[4px] bg-[#f2a93b] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white shadow-[0_1px_5px_rgba(31,44,58,0.14)]">
+                  <span className="absolute right-[32px] top-[4px] rounded-[4px] bg-[#26c9bc] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white shadow-[0_1px_5px_rgba(31,44,58,0.14)]">
                     {pendingLabel}
                   </span>
                 ) : null}
