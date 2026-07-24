@@ -2590,8 +2590,6 @@ function TabletOcrQuestionReviewPage({
       const nextIds = new Set(currentIds);
       if (nextSelected) {
         nextIds.add(box.id);
-      } else {
-        nextIds.delete(box.id);
       }
       return nextIds;
     });
@@ -2599,7 +2597,7 @@ function TabletOcrQuestionReviewPage({
       if (question.id !== box.id) return question;
       return {
         ...question,
-        questionTypeStatus: nextSelected ? 'stale' : 'recognized',
+        questionTypeStatus: pendingReviewBoxIds.has(box.id) || nextSelected ? 'stale' : 'recognized',
       };
     }));
   };
@@ -2847,7 +2845,8 @@ function TabletOcrQuestionReviewPage({
           <img alt="" className="h-full w-full object-fill" src={page.url} />
           {pageBoxes.map((box) => {
             const isActive = box.id === activeQuestionId;
-            const isQueued = pendingReviewBoxIds.has(box.id) && box.selected;
+            const isPending = pendingReviewBoxIds.has(box.id);
+            const isQueued = isPending && box.selected;
             const hasLinkedQuestion = questions.some((question) => question.id === box.id);
             const pendingLabel = hasLinkedQuestion ? '待重新识别' : '待识别';
 
@@ -2860,7 +2859,7 @@ function TabletOcrQuestionReviewPage({
                 className={`absolute ${
                   isActive
                     ? 'border-2 border-[#23bfb2] bg-[#ddf8f4]/38 shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
-                    : isQueued
+                    : isPending
                       ? 'border-2 border-[#26c9bc] bg-[#ddf8f4]/25'
                       : 'border-0 bg-[#202124]/10'
                 }`}
@@ -2894,7 +2893,7 @@ function TabletOcrQuestionReviewPage({
                 >
                   ✓
                 </button>
-                {isQueued ? (
+                {isPending ? (
                   <span className="absolute right-[32px] top-[4px] rounded-[4px] bg-[#f2a93b] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white shadow-[0_1px_5px_rgba(31,44,58,0.14)]">
                     {pendingLabel}
                   </span>
