@@ -2189,6 +2189,7 @@ function TabletOcrQuestionReviewPage({
   const [recognitionStatus, setRecognitionStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
   const [recognitionMessage, setRecognitionMessage] = useState('正在准备识别题型...');
   const [pendingReviewBoxIds, setPendingReviewBoxIds] = useState<Set<string>>(new Set());
+  const [recognizingReviewBoxIds, setRecognizingReviewBoxIds] = useState<Set<string>>(new Set());
   const [isReviewAddBoxMode, setIsReviewAddBoxMode] = useState(false);
   const [reviewBoxDrag, setReviewBoxDrag] = useState<{
     id: string;
@@ -2766,6 +2767,7 @@ function TabletOcrQuestionReviewPage({
 
     setRecognitionStatus('recognizing');
     setRecognitionMessage(`AI 正在继续识别 ${changedBoxes.length} 个框...`);
+    setRecognizingReviewBoxIds(changedBoxIds);
     setQuestions((currentQuestions) => currentQuestions.map((question) => (
       changedBoxIds.has(question.id) ? { ...question, questionTypeStatus: 'pending' } : question
     )));
@@ -2812,6 +2814,7 @@ function TabletOcrQuestionReviewPage({
         changedBoxIds.forEach((boxId) => nextIds.delete(boxId));
         return nextIds;
       });
+      setRecognizingReviewBoxIds(new Set());
       setRecognitionStatus('done');
       setRecognitionMessage('AI 继续识别完成');
     } catch (error) {
@@ -2819,6 +2822,7 @@ function TabletOcrQuestionReviewPage({
       setQuestions((currentQuestions) => currentQuestions.map((question) => (
         changedBoxIds.has(question.id) ? { ...question, questionTypeStatus: 'failed' } : question
       )));
+      setRecognizingReviewBoxIds(new Set());
       setRecognitionStatus('failed');
       setRecognitionMessage('AI 继续识别失败，请手动核对题型');
     }
@@ -2941,9 +2945,40 @@ function TabletOcrQuestionReviewPage({
     </div>
   );
 
+  const renderReviewRecognizingContent = (message: string) => (
+    <div className="flex h-[204px] w-full flex-col items-center justify-center rounded-[8px] border border-[#dfe4e8] bg-[#f8fafb]">
+      <div className="h-[34px] w-[34px] animate-spin rounded-full border-[3px] border-[#cfe5e2] border-t-[#23bfb2]" />
+      <div className="mt-[16px] text-[20px] font-medium leading-none text-[#3f4852]">{message}</div>
+    </div>
+  );
+
+  const renderReviewQuestionSkeleton = (box: RecognitionBox) => (
+    <section
+      key={`skeleton-${box.id}`}
+      className="relative rounded-[10px] border-[2px] border-dashed border-[#cbd5dc] bg-white p-[24px] shadow-[0_6px_18px_rgba(31,44,58,0.05)]"
+    >
+      <div className="flex h-[42px] items-center justify-between">
+        <div className="h-[26px] w-[128px] rounded-full bg-[#dce4ea]" />
+        <div className="h-[30px] w-[146px] rounded-full bg-[#e8edf1]" />
+      </div>
+      <div className="mt-[22px] rounded-[8px] border border-[#edf1f3] bg-[#f8fafb] p-[18px]">
+        <div className="space-y-[12px]">
+          <div className="h-[16px] w-[86%] rounded-full bg-[#dce4ea]" />
+          <div className="h-[16px] w-[68%] rounded-full bg-[#e3e9ee]" />
+          <div className="h-[16px] w-[74%] rounded-full bg-[#dce4ea]" />
+        </div>
+        <div className="mt-[18px] flex items-center gap-[12px] text-[20px] font-medium leading-none text-[#3f4852]">
+          <div className="h-[26px] w-[26px] animate-spin rounded-full border-[3px] border-[#cfe5e2] border-t-[#23bfb2]" />
+          正在识别中
+        </div>
+      </div>
+    </section>
+  );
+
   const renderQuestionCard = (question: ReviewQuestion) => {
     const isActive = question.id === activeQuestionId;
     const isCropEditing = editingCropQuestionId === question.id;
+    const isQuestionRecognizing = recognizingReviewBoxIds.has(question.id);
     const questionImageData = isCropEditing
       ? question.croppedImageData
       : question.userCroppedImageData || question.croppedImageData;
@@ -3023,7 +3058,9 @@ function TabletOcrQuestionReviewPage({
         ) : null}
 
         <div className="p-[24px]">
-          {question.viewMode === 'image' ? (
+          {isQuestionRecognizing ? (
+            renderReviewRecognizingContent('正在重新识别中')
+          ) : question.viewMode === 'image' ? (
             <CroppedQuestionImage
               cropRegion={isCropEditing ? cropRegion : null}
               imageData={questionImageData}
@@ -3140,6 +3177,41 @@ function TabletOcrQuestionReviewPage({
     );
   };
 
+  const renderReviewQuestionItems = () => {
+    const existingQuestionIds = new Set(questions.map((question) => question.id));
+    const sortedBoxes = [...reviewBoxes].sort((firstBox, secondBox) => (
+      firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y || firstBox.x - secondBox.x
+    ));
+    const newRecognizingBoxes = sortedBoxes.filter((box) => (
+      recognizingReviewBoxIds.has(box.id) && !existingQuestionIds.has(box.id)
+    ));
+    const items: Array<
+      | { type: 'question'; question: ReviewQuestion }
+      | { type: 'skeleton'; box: RecognitionBox }
+    > = questions.map((question) => ({ type: 'question' as const, question }));
+
+    newRecognizingBoxes.forEach((box) => {
+      const boxOrderIndex = sortedBoxes.findIndex((currentBox) => currentBox.id === box.id);
+      const nextExistingBox = sortedBoxes.slice(boxOrderIndex + 1).find((currentBox) => (
+        existingQuestionIds.has(currentBox.id)
+      ));
+      const insertIndex = nextExistingBox
+        ? items.findIndex((item) => item.type === 'question' && item.question.id === nextExistingBox.id)
+        : -1;
+      const skeletonItem = { type: 'skeleton' as const, box };
+
+      if (insertIndex >= 0) {
+        items.splice(insertIndex, 0, skeletonItem);
+      } else {
+        items.push(skeletonItem);
+      }
+    });
+
+    return items.map((item) => (
+      item.type === 'question' ? renderQuestionCard(item.question) : renderReviewQuestionSkeleton(item.box)
+    ));
+  };
+
   const selectedPendingBoxCount = reviewBoxes.filter((box) => box.selected && pendingReviewBoxIds.has(box.id)).length;
 
   return (
@@ -3218,8 +3290,8 @@ function TabletOcrQuestionReviewPage({
             </div>
           </div>
           <div className="absolute bottom-0 left-[28px] right-[28px] top-[104px] overflow-y-auto pb-[36px]">
-            {questions.length > 0 ? (
-              <div className="space-y-[22px]">{questions.map(renderQuestionCard)}</div>
+            {questions.length > 0 || recognizingReviewBoxIds.size > 0 ? (
+              <div className="space-y-[22px]">{renderReviewQuestionItems()}</div>
             ) : (
               <div className="flex h-[360px] items-center justify-center rounded-[12px] border border-dashed border-[#d7dde3] bg-white text-[22px] text-[#8b949e]">
                 暂无可核对题目
