@@ -1591,6 +1591,7 @@ function TabletOcrContentSelectionPage({
   const [hasStarted, setHasStarted] = useState(false);
   const [confirmAction, setConfirmAction] = useState<TabletConfirmAction>(null);
   const [dismissedEmptyPromptPages, setDismissedEmptyPromptPages] = useState<Set<number>>(new Set());
+  const [isAddBoxMode, setIsAddBoxMode] = useState(false);
   const imageWrapRef = useRef<HTMLDivElement>(null);
   const pageWrapRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const hasMovedBoxRef = useRef(false);
@@ -1618,6 +1619,7 @@ function TabletOcrContentSelectionPage({
         setBoxes([]);
         setHasStarted(false);
         setDismissedEmptyPromptPages(new Set());
+        setIsAddBoxMode(false);
       }
 
       const existingPages = hasRemovedImage || hasModeChanged ? [] : materialPagesRef.current;
@@ -1636,6 +1638,7 @@ function TabletOcrContentSelectionPage({
         setBoxes([]);
         setHasStarted(false);
         setDismissedEmptyPromptPages(new Set());
+        setIsAddBoxMode(false);
       }
 
       try {
@@ -1744,8 +1747,7 @@ function TabletOcrContentSelectionPage({
   const isSeparateMode = mode === 'separate_answer';
   const selectedCount = boxes.filter((box) => box.selected).length;
 
-  const addManualBox = () => {
-    const targetPage = activePage?.role === 'answer' ? questionPages[0] : activePage;
+  const addManualBox = (targetPage = activePage?.role === 'answer' ? questionPages[0] : activePage) => {
     if (!targetPage) return;
 
     const pageNumber = targetPage.pageNumber;
@@ -1765,6 +1767,36 @@ function TabletOcrContentSelectionPage({
       },
     ]);
     setStatus('ready');
+  };
+
+  const addManualBoxAtPoint = (page: MaterialPage, clientX: number, clientY: number) => {
+    const containerRect = pageWrapRefs.current[page.pageNumber]?.getBoundingClientRect();
+    if (!containerRect) return;
+
+    const width = 72;
+    const height = 8;
+    const clickX = ((clientX - containerRect.left) / containerRect.width) * 100;
+    const clickY = ((clientY - containerRect.top) / containerRect.height) * 100;
+
+    setBoxes((currentBoxes) => [
+      ...currentBoxes,
+      {
+        id: `manual-${Date.now()}`,
+        pageNumber: page.pageNumber,
+        x: clampPercent(clickX - width / 2, 0, 100 - width),
+        y: clampPercent(clickY - height / 2, 0, 100 - height),
+        width,
+        height,
+        selected: true,
+        source: 'manual',
+      },
+    ]);
+    setStatus('ready');
+    setDismissedEmptyPromptPages((currentPages) => {
+      const nextPages = new Set(currentPages);
+      nextPages.add(page.pageNumber);
+      return nextPages;
+    });
   };
 
   const startBoxDrag = (
@@ -1849,7 +1881,14 @@ function TabletOcrContentSelectionPage({
         }}
       >
         <div
-          className="relative bg-white"
+          className={`relative bg-white ${isAddBoxMode && isQuestionPage ? 'cursor-crosshair' : ''}`}
+          onClick={(event) => {
+            if (isAddBoxMode && isQuestionPage) {
+              event.stopPropagation();
+              setActivePageNumber(page.pageNumber);
+              addManualBoxAtPoint(page, event.clientX, event.clientY);
+            }
+          }}
           ref={(node) => {
             pageWrapRefs.current[page.pageNumber] = node;
             if (page.pageNumber === activePage?.pageNumber) {
@@ -1867,7 +1906,8 @@ function TabletOcrContentSelectionPage({
                   ? 'border-[#26c9bc] bg-[#ddf8f4]/25'
                   : 'border-[#9ba6b0] bg-white/30'
               }`}
-              onClick={() => {
+              onClick={(event) => {
+                event.stopPropagation();
                 if (!hasMovedBoxRef.current) {
                   toggleBox(box.id);
                 }
@@ -1915,7 +1955,10 @@ function TabletOcrContentSelectionPage({
             </div>
           )) : null}
           {isQuestionPage && pageBoxes.length === 0 && isFirstQuestionPage && !dismissedEmptyPromptPages.has(page.pageNumber) ? (
-            <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-[16px] bg-white/92 px-[42px] py-[34px] shadow-[0_12px_34px_rgba(31,44,58,0.16)]">
+            <div
+              className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-[16px] bg-white/92 px-[42px] py-[34px] shadow-[0_12px_34px_rgba(31,44,58,0.16)]"
+              onClick={(event) => event.stopPropagation()}
+            >
               <button
                 aria-label="关闭未识别提示"
                 className="absolute right-[12px] top-[12px] flex h-[32px] w-[32px] items-center justify-center text-[#3f4852] active:text-[#202124]"
@@ -1934,7 +1977,7 @@ function TabletOcrContentSelectionPage({
               <div className="text-[24px] font-medium leading-none text-[#202124]">未识别到题目框</div>
               <button
                 className="mt-[22px] h-[46px] rounded-[8px] bg-[#23bfb2] px-[24px] text-[20px] font-medium leading-none text-white active:bg-[#12a99d]"
-                onClick={addManualBox}
+                onClick={() => addManualBox(page)}
                 type="button"
               >
                 添加识别框
@@ -2007,7 +2050,15 @@ function TabletOcrContentSelectionPage({
           <button className="h-[46px] rounded-[8px] border border-[#d7dde3] bg-white px-[20px] text-[20px] text-[#3f4852] active:bg-[#f4f6f7]" onClick={onSupplement} type="button">
             补充资料
           </button>
-          <button className="h-[46px] rounded-[8px] border border-[#23bfb2] bg-white px-[20px] text-[20px] font-medium text-[#12a99d] active:bg-[#effcf9]" onClick={addManualBox} type="button">
+          <button
+            className={`h-[46px] rounded-[8px] border px-[20px] text-[20px] font-medium ${
+              isAddBoxMode
+                ? 'border-[#23bfb2] bg-[#23bfb2] text-white active:bg-[#12a99d]'
+                : 'border-[#23bfb2] bg-white text-[#12a99d] active:bg-[#effcf9]'
+            }`}
+            onClick={() => setIsAddBoxMode((currentMode) => !currentMode)}
+            type="button"
+          >
             添加识别框
           </button>
           <button
