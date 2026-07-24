@@ -1883,14 +1883,19 @@ function QuestionTypeSelect({
   const statusLabel = status === 'pending'
     ? '识别中'
     : status === 'stale'
-      ? '待重新识别'
+      ? ''
       : status === 'failed'
         ? '识别失败'
         : '';
+  const statusClassName = status === 'failed'
+    ? 'border-[#f2a93b] text-[#d98712]'
+    : statusLabel
+      ? 'border-[#d7dde3] text-[#7b858f]'
+      : 'border-[#26c9bc] text-[#16a69a]';
 
   return (
     <label className={`relative inline-flex h-[42px] min-w-[128px] items-center rounded-[7px] border bg-white pl-[14px] pr-[38px] text-[20px] font-medium leading-none ${
-      statusLabel ? 'border-[#d7dde3] text-[#7b858f]' : 'border-[#26c9bc] text-[#16a69a]'
+      statusClassName
     }`}>
       <select
         aria-label="题型"
