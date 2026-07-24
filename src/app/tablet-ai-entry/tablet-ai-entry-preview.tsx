@@ -2856,7 +2856,7 @@ function TabletOcrQuestionReviewPage({
                 }}
                 className={`absolute ${
                   isActive
-                    ? 'border-2 border-[#23bfb2] bg-transparent shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
+                    ? 'border-2 border-[#23bfb2] bg-[#ddf8f4]/38 shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
                     : isQueued
                       ? 'border-2 border-[#f2a93b] bg-[#fff4df]/32'
                       : 'border-0 bg-[#202124]/10'
