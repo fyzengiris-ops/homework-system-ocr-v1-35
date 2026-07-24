@@ -1590,6 +1590,7 @@ function TabletOcrContentSelectionPage({
   } | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
   const [confirmAction, setConfirmAction] = useState<TabletConfirmAction>(null);
+  const [dismissedEmptyPromptPages, setDismissedEmptyPromptPages] = useState<Set<number>>(new Set());
   const imageWrapRef = useRef<HTMLDivElement>(null);
   const pageWrapRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const hasMovedBoxRef = useRef(false);
@@ -1616,6 +1617,7 @@ function TabletOcrContentSelectionPage({
         setMaterialPages([]);
         setBoxes([]);
         setHasStarted(false);
+        setDismissedEmptyPromptPages(new Set());
       }
 
       const existingPages = hasRemovedImage || hasModeChanged ? [] : materialPagesRef.current;
@@ -1633,6 +1635,7 @@ function TabletOcrContentSelectionPage({
         setStatus('loading');
         setBoxes([]);
         setHasStarted(false);
+        setDismissedEmptyPromptPages(new Set());
       }
 
       try {
@@ -1911,8 +1914,23 @@ function TabletOcrContentSelectionPage({
               />
             </div>
           )) : null}
-          {isQuestionPage && pageBoxes.length === 0 && isFirstQuestionPage ? (
+          {isQuestionPage && pageBoxes.length === 0 && isFirstQuestionPage && !dismissedEmptyPromptPages.has(page.pageNumber) ? (
             <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-[16px] bg-white/92 px-[42px] py-[34px] shadow-[0_12px_34px_rgba(31,44,58,0.16)]">
+              <button
+                aria-label="关闭未识别提示"
+                className="absolute right-[12px] top-[12px] flex h-[28px] w-[28px] items-center justify-center rounded-full text-[#7a848e] active:bg-[#eef2f5]"
+                onClick={() => {
+                  setDismissedEmptyPromptPages((currentPages) => {
+                    const nextPages = new Set(currentPages);
+                    nextPages.add(page.pageNumber);
+                    return nextPages;
+                  });
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                type="button"
+              >
+                <X className="h-[18px] w-[18px]" />
+              </button>
               <div className="text-[24px] font-medium leading-none text-[#202124]">未识别到题目框</div>
               <button
                 className="mt-[22px] h-[46px] rounded-[8px] bg-[#23bfb2] px-[24px] text-[20px] font-medium leading-none text-white active:bg-[#12a99d]"
