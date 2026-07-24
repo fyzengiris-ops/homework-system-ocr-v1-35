@@ -2557,6 +2557,22 @@ function TabletOcrQuestionReviewPage({
     }
   };
 
+  const handleDeleteReviewBox = (boxId: string) => {
+    const hasLinkedQuestion = questions.some((question) => question.id === boxId);
+    if (hasLinkedQuestion) {
+      handleDeleteQuestion(boxId);
+      return;
+    }
+
+    setReviewBoxes((currentBoxes) => currentBoxes.filter((box) => box.id !== boxId));
+    setPendingReviewBoxIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      nextIds.delete(boxId);
+      return nextIds;
+    });
+    setActiveQuestionId((currentId) => (currentId === boxId ? questions[0]?.id || '' : currentId));
+  };
+
   const handleStartCrop = (question: ReviewQuestion) => {
     if (hasDraggedCropRef.current) {
       window.setTimeout(() => {
@@ -2793,6 +2809,8 @@ function TabletOcrQuestionReviewPage({
           {pageBoxes.map((box) => {
             const isActive = box.id === activeQuestionId;
             const isPending = pendingReviewBoxIds.has(box.id);
+            const hasLinkedQuestion = questions.some((question) => question.id === box.id);
+            const pendingLabel = hasLinkedQuestion ? '待重新识别' : '待识别';
 
             return (
               <div
@@ -2805,7 +2823,7 @@ function TabletOcrQuestionReviewPage({
                     ? 'border-[#23bfb2] bg-[#ddf8f4]/32 shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
                     : isPending
                       ? 'border-[#f2a93b] bg-[#fff4df]/35'
-                      : 'border-[#6ed7cd] bg-[#ddf8f4]/18'
+                      : 'border-[#8d98a3] bg-transparent'
                 }`}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -2821,11 +2839,30 @@ function TabletOcrQuestionReviewPage({
                   width: `${box.width}%`,
                 }}
               >
+                <span
+                  className={`pointer-events-none absolute left-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-[3px] text-[12px] font-semibold leading-none text-white ${
+                    isPending ? 'bg-[#f2a93b]' : isActive ? 'bg-[#26c9bc]' : 'bg-[#8d98a3]'
+                  }`}
+                >
+                  ✓
+                </span>
                 {isPending ? (
-                  <span className="absolute right-[4px] top-[4px] rounded-[4px] bg-[#f2a93b] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white">
-                    待识别
+                  <span className="absolute right-[30px] top-[4px] rounded-[4px] bg-[#f2a93b] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white">
+                    {pendingLabel}
                   </span>
                 ) : null}
+                <button
+                  aria-label="删除识别框"
+                  className="absolute right-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[#202124]/55 text-white active:bg-[#000]"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleDeleteReviewBox(box.id);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  type="button"
+                >
+                  <X className="h-[13px] w-[13px]" />
+                </button>
                 <button
                   aria-label="调整识别框大小"
                   className="absolute bottom-[-8px] right-[-8px] h-[18px] w-[18px] rounded-full border-[2px] border-white bg-[#26c9bc] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
