@@ -2895,7 +2895,7 @@ function TabletOcrQuestionReviewPage({
                   ✓
                 </button>
                 {isQueued ? (
-                  <span className="absolute right-[32px] top-[4px] rounded-[4px] bg-[#26c9bc] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white shadow-[0_1px_5px_rgba(31,44,58,0.14)]">
+                  <span className="absolute right-[32px] top-[4px] rounded-[4px] bg-[#f2a93b] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white shadow-[0_1px_5px_rgba(31,44,58,0.14)]">
                     {pendingLabel}
                   </span>
                 ) : null}
