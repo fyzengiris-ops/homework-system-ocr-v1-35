@@ -2171,13 +2171,13 @@ function TabletOcrQuestionReviewPage({
   onExit: () => void;
   subject: string;
 }) {
-  const initialReviewBoxes = boxes
+  const initialSelectedBoxes = boxes
     .filter((box) => box.selected)
-    .sort((firstBox, secondBox) => firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y)
-    .map((box) => ({ ...box, selected: true }));
+    .sort((firstBox, secondBox) => firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y);
+  const initialReviewBoxes = initialSelectedBoxes.map((box) => ({ ...box, selected: false }));
   const [globalMode, setGlobalMode] = useState<ReviewDisplayMode>('recognition');
   const [reviewBoxes, setReviewBoxes] = useState<RecognitionBox[]>(initialReviewBoxes);
-  const [questions, setQuestions] = useState<ReviewQuestion[]>(() => createInitialReviewQuestions(initialReviewBoxes, 'recognition'));
+  const [questions, setQuestions] = useState<ReviewQuestion[]>(() => createInitialReviewQuestions(initialSelectedBoxes, 'recognition'));
   const [activeQuestionId, setActiveQuestionId] = useState(() => questions[0]?.id || '');
   const [openMenuQuestionId, setOpenMenuQuestionId] = useState<string | null>(null);
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
@@ -2483,6 +2483,9 @@ function TabletOcrQuestionReviewPage({
       const changedBoxId = reviewBoxDrag.id;
       setReviewBoxDrag(null);
       if (hasMovedReviewBoxRef.current) {
+        setReviewBoxes((currentBoxes) => currentBoxes.map((box) => (
+          box.id === changedBoxId ? { ...box, selected: true } : box
+        )));
         setPendingReviewBoxIds((currentIds) => {
           const nextIds = new Set(currentIds);
           nextIds.add(changedBoxId);
@@ -2571,6 +2574,30 @@ function TabletOcrQuestionReviewPage({
       return nextIds;
     });
     setActiveQuestionId((currentId) => (currentId === boxId ? questions[0]?.id || '' : currentId));
+  };
+
+  const handleToggleReviewBoxSelection = (box: RecognitionBox) => {
+    const nextSelected = !box.selected;
+
+    setReviewBoxes((currentBoxes) => currentBoxes.map((currentBox) => (
+      currentBox.id === box.id ? { ...currentBox, selected: nextSelected } : currentBox
+    )));
+    setPendingReviewBoxIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      if (nextSelected) {
+        nextIds.add(box.id);
+      } else {
+        nextIds.delete(box.id);
+      }
+      return nextIds;
+    });
+    setQuestions((currentQuestions) => currentQuestions.map((question) => {
+      if (question.id !== box.id) return question;
+      return {
+        ...question,
+        questionTypeStatus: nextSelected ? 'stale' : 'recognized',
+      };
+    }));
   };
 
   const handleStartCrop = (question: ReviewQuestion) => {
@@ -2724,11 +2751,13 @@ function TabletOcrQuestionReviewPage({
   const handleContinueRecognition = async () => {
     if (pendingReviewBoxIds.size === 0 || recognitionStatus === 'recognizing') return;
 
-    const changedBoxIds = new Set(pendingReviewBoxIds);
     const pageByNumberForCrop = new Map(materialPages.map((page) => [page.pageNumber, page]));
     const changedBoxes = reviewBoxes
-      .filter((box) => changedBoxIds.has(box.id))
+      .filter((box) => pendingReviewBoxIds.has(box.id) && box.selected)
       .sort((firstBox, secondBox) => firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y || firstBox.x - secondBox.x);
+    if (changedBoxes.length === 0) return;
+
+    const changedBoxIds = new Set(changedBoxes.map((box) => box.id));
 
     setRecognitionStatus('recognizing');
     setRecognitionMessage(`AI 正在继续识别 ${changedBoxes.length} 个框...`);
@@ -2770,7 +2799,14 @@ function TabletOcrQuestionReviewPage({
       ));
 
       setQuestions((currentQuestions) => mergeRecognizedReviewQuestions(currentQuestions, recognizedQuestions, changedBoxIds));
-      setPendingReviewBoxIds(new Set());
+      setReviewBoxes((currentBoxes) => currentBoxes.map((box) => (
+        changedBoxIds.has(box.id) ? { ...box, selected: false } : box
+      )));
+      setPendingReviewBoxIds((currentIds) => {
+        const nextIds = new Set(currentIds);
+        changedBoxIds.forEach((boxId) => nextIds.delete(boxId));
+        return nextIds;
+      });
       setRecognitionStatus('done');
       setRecognitionMessage('AI 继续识别完成');
     } catch (error) {
@@ -2808,7 +2844,7 @@ function TabletOcrQuestionReviewPage({
           <img alt="" className="h-full w-full object-fill" src={page.url} />
           {pageBoxes.map((box) => {
             const isActive = box.id === activeQuestionId;
-            const isPending = pendingReviewBoxIds.has(box.id);
+            const isQueued = pendingReviewBoxIds.has(box.id) && box.selected;
             const hasLinkedQuestion = questions.some((question) => question.id === box.id);
             const pendingLabel = hasLinkedQuestion ? '待重新识别' : '待识别';
 
@@ -2818,12 +2854,12 @@ function TabletOcrQuestionReviewPage({
                 ref={(node) => {
                   leftBoxRefs.current[box.id] = node;
                 }}
-                className={`absolute border-2 ${
+                className={`absolute ${
                   isActive
-                    ? 'border-[#23bfb2] bg-[#ddf8f4]/32 shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
-                    : isPending
-                      ? 'border-[#f2a93b] bg-[#fff4df]/35'
-                      : 'border-[#8d98a3] bg-transparent'
+                    ? 'border-2 border-[#23bfb2] bg-transparent shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
+                    : isQueued
+                      ? 'border-2 border-[#f2a93b] bg-[#fff4df]/32'
+                      : 'border-0 bg-[#202124]/10'
                 }`}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -2839,21 +2875,32 @@ function TabletOcrQuestionReviewPage({
                   width: `${box.width}%`,
                 }}
               >
-                <span
-                  className={`pointer-events-none absolute left-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-[3px] text-[12px] font-semibold leading-none text-white ${
-                    isPending ? 'bg-[#f2a93b]' : isActive ? 'bg-[#26c9bc]' : 'bg-[#8d98a3]'
+                <button
+                  aria-label={box.selected ? '取消选中识别框' : '选中识别框'}
+                  className={`absolute left-[4px] top-[4px] flex h-[22px] w-[22px] items-center justify-center rounded-[4px] border text-[13px] font-semibold leading-none shadow-[0_1px_5px_rgba(31,44,58,0.16)] ${
+                    box.selected
+                      ? isQueued
+                        ? 'border-[#f2a93b] bg-[#f2a93b] text-white'
+                        : 'border-[#26c9bc] bg-[#26c9bc] text-white'
+                      : 'border-white/80 bg-[#202124]/42 text-transparent'
                   }`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleToggleReviewBoxSelection(box);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  type="button"
                 >
                   ✓
-                </span>
-                {isPending ? (
-                  <span className="absolute right-[30px] top-[4px] rounded-[4px] bg-[#f2a93b] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white">
+                </button>
+                {isQueued ? (
+                  <span className="absolute right-[32px] top-[4px] rounded-[4px] bg-[#f2a93b] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white shadow-[0_1px_5px_rgba(31,44,58,0.14)]">
                     {pendingLabel}
                   </span>
                 ) : null}
                 <button
                   aria-label="删除识别框"
-                  className="absolute right-[4px] top-[4px] flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[#202124]/55 text-white active:bg-[#000]"
+                  className="absolute right-[4px] top-[4px] flex h-[22px] w-[22px] items-center justify-center rounded-full bg-[#202124]/50 text-white shadow-[0_1px_5px_rgba(31,44,58,0.16)] active:bg-[#000]"
                   onClick={(event) => {
                     event.stopPropagation();
                     handleDeleteReviewBox(box.id);
@@ -3089,6 +3136,8 @@ function TabletOcrQuestionReviewPage({
     );
   };
 
+  const selectedPendingBoxCount = reviewBoxes.filter((box) => box.selected && pendingReviewBoxIds.has(box.id)).length;
+
   return (
     <div className="absolute inset-0 z-30 bg-[#eef2f5]">
       <header className="absolute left-0 top-0 h-[88px] w-full border-b border-[#e3e7eb] bg-white">
@@ -3126,7 +3175,7 @@ function TabletOcrQuestionReviewPage({
       </header>
 
       <main className="absolute bottom-0 left-0 right-0 top-[88px] flex">
-        {pendingReviewBoxIds.size > 0 ? (
+        {selectedPendingBoxCount > 0 ? (
           <button
             className="absolute left-[980px] top-1/2 z-30 flex h-[82px] w-[82px] -translate-y-1/2 flex-col items-center justify-center rounded-full bg-[#23bfb2] text-[18px] font-semibold leading-[22px] text-white shadow-[0_10px_28px_rgba(35,191,178,0.36)] active:bg-[#12a99d] disabled:bg-[#b7d8d5]"
             disabled={recognitionStatus === 'recognizing'}
