@@ -89,6 +89,8 @@ type ReviewQuestion = {
   }>;
   viewMode: ReviewDisplayMode;
   croppedImageData?: string;
+  croppedImageHeight?: number;
+  croppedImageWidth?: number;
   userCroppedImageData?: string;
 };
 
@@ -102,6 +104,25 @@ const reviewQuestionTypeOptions: Array<{ value: ReviewQuestionType; label: strin
   { value: 'material', label: '材料题' },
   { value: 'judge', label: '判断题' },
 ];
+
+function mapRecognizedQuestionType(questionType: string | undefined): ReviewQuestionType {
+  if (questionType === '单选题') return 'single_choice';
+  if (questionType === '多选题') return 'multiple_choice';
+  if (questionType === '填空题') return 'fill_blank';
+  if (questionType === '材料题') return 'material';
+  if (questionType === '判断题') return 'judge';
+  return 'short_answer';
+}
+
+function getDefaultOptionCount(questionType: ReviewQuestionType, optionCount?: number) {
+  if (questionType === 'multiple_choice' || questionType === 'single_choice') return optionCount || 4;
+  return 4;
+}
+
+function getDefaultBlankCount(questionType: ReviewQuestionType, blankCount?: number) {
+  if (questionType === 'fill_blank') return blankCount || 1;
+  return 1;
+}
 
 const assignments = [
   {
@@ -1737,36 +1758,24 @@ function getReviewQuestionTypeLabel(type: ReviewQuestionType) {
 }
 
 function createInitialReviewQuestions(boxes: RecognitionBox[], displayMode: ReviewDisplayMode): ReviewQuestion[] {
-  const typeCycle: ReviewQuestionType[] = ['single_choice', 'multiple_choice', 'fill_blank', 'short_answer', 'material'];
-
   return boxes
     .filter((box) => box.selected)
     .sort((firstBox, secondBox) => firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y)
-    .map((box, index) => {
-      const questionType = typeCycle[index % typeCycle.length];
-
-      return {
-        id: box.id,
-        pageNumber: box.pageNumber,
-        crop: {
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
-        },
-        questionType,
-        optionCount: questionType === 'multiple_choice' ? 5 : 4,
-        blankCount: questionType === 'fill_blank' ? 2 : 1,
-        subQuestions: questionType === 'material'
-          ? [
-              { id: `${box.id}-sub-1`, questionType: 'short_answer', optionCount: 4, blankCount: 1 },
-              { id: `${box.id}-sub-2`, questionType: 'single_choice', optionCount: 4, blankCount: 1 },
-              { id: `${box.id}-sub-3`, questionType: 'fill_blank', optionCount: 4, blankCount: 2 },
-            ]
-          : [],
-        viewMode: displayMode,
-      };
-    });
+    .map((box) => ({
+      id: box.id,
+      pageNumber: box.pageNumber,
+      crop: {
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+      },
+      questionType: 'short_answer',
+      optionCount: 4,
+      blankCount: 1,
+      subQuestions: [],
+      viewMode: displayMode,
+    }));
 }
 
 function StepSegmentedControl({
@@ -1961,20 +1970,24 @@ function CroppedQuestionImage({
 function AnswerConfigPanel({
   onAddSubQuestion,
   onBlankCountChange,
+  onDeleteSubQuestion,
   onOptionCountChange,
   onSubQuestionBlankCountChange,
   onSubQuestionOptionCountChange,
   onSubQuestionTypeChange,
   question,
 }: {
-  onAddSubQuestion: () => void;
+  onAddSubQuestion: (questionType: ReviewQuestionType) => void;
   onBlankCountChange: (value: number) => void;
+  onDeleteSubQuestion: (subQuestionId: string) => void;
   onOptionCountChange: (value: number) => void;
   onSubQuestionBlankCountChange: (subQuestionId: string, value: number) => void;
   onSubQuestionOptionCountChange: (subQuestionId: string, value: number) => void;
   onSubQuestionTypeChange: (subQuestionId: string, value: ReviewQuestionType) => void;
   question: ReviewQuestion;
 }) {
+  const [isAddTypeMenuOpen, setIsAddTypeMenuOpen] = useState(false);
+
   if (question.questionType === 'single_choice' || question.questionType === 'multiple_choice') {
     return <CountStepper label="选项数" onChange={onOptionCountChange} value={question.optionCount} />;
   }
@@ -1987,14 +2000,33 @@ function AnswerConfigPanel({
     return (
       <div>
         <div className="mb-[22px] flex items-center gap-[20px]">
-          <button
-            className="inline-flex h-[52px] items-center gap-[10px] rounded-[7px] border border-[#c9ced3] bg-white px-[20px] text-[24px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
-            onClick={onAddSubQuestion}
-            type="button"
-          >
-            <Plus className="h-[28px] w-[28px] stroke-[2.4]" />
-            子题
-          </button>
+          <div className="relative">
+            <button
+              className="inline-flex h-[52px] items-center gap-[10px] rounded-[7px] border border-[#c9ced3] bg-white px-[20px] text-[24px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
+              onClick={() => setIsAddTypeMenuOpen((isOpen) => !isOpen)}
+              type="button"
+            >
+              <Plus className="h-[28px] w-[28px] stroke-[2.4]" />
+              子题
+            </button>
+            {isAddTypeMenuOpen ? (
+              <div className="absolute left-0 top-[60px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
+                {reviewQuestionTypeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    className="h-[46px] w-full px-[18px] text-left text-[20px] leading-none text-[#4d5258] active:bg-[#f3f5f6]"
+                    onClick={() => {
+                      onAddSubQuestion(option.value);
+                      setIsAddTypeMenuOpen(false);
+                    }}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#b7bbc0] text-[22px] font-semibold leading-none text-white">
             !
           </span>
@@ -2042,6 +2074,14 @@ function AnswerConfigPanel({
                   />
                 </>
               ) : null}
+              <button
+                aria-label="删除子题"
+                className="ml-[14px] flex h-[34px] w-[34px] items-center justify-center rounded-full text-[#7b8085] active:bg-[#eceff1] active:text-[#d84a4a]"
+                onClick={() => onDeleteSubQuestion(subQuestion.id)}
+                type="button"
+              >
+                <Trash2 className="h-[20px] w-[20px]" />
+              </button>
             </div>
           ))}
         </div>
@@ -2070,6 +2110,8 @@ function TabletOcrQuestionReviewPage({
   const [activeQuestionId, setActiveQuestionId] = useState(() => questions[0]?.id || '');
   const [openMenuQuestionId, setOpenMenuQuestionId] = useState<string | null>(null);
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
+  const [recognitionStatus, setRecognitionStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
+  const [recognitionMessage, setRecognitionMessage] = useState('正在准备识别题型...');
   const [cropRegion, setCropRegion] = useState<CropRegion | null>(null);
   const [cropDrag, setCropDrag] = useState<{
     action: CropDragAction;
@@ -2080,6 +2122,7 @@ function TabletOcrQuestionReviewPage({
   const leftBoxRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const imageDisplaySizesRef = useRef<Map<string, { width: number; height: number }>>(new Map());
   const hasDraggedCropRef = useRef(false);
+  const recognitionStartedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -2097,6 +2140,8 @@ function TabletOcrQuestionReviewPage({
         return {
           id: question.id,
           imageData: cropped.imageData,
+          height: cropped.height,
+          width: cropped.width,
         };
       }));
 
@@ -2104,7 +2149,12 @@ function TabletOcrQuestionReviewPage({
 
       setQuestions((currentQuestions) => currentQuestions.map((question) => {
         const croppedEntry = croppedEntries.find((entry) => entry?.id === question.id);
-        return croppedEntry ? { ...question, croppedImageData: croppedEntry.imageData } : question;
+        return croppedEntry ? {
+          ...question,
+          croppedImageData: croppedEntry.imageData,
+          croppedImageHeight: croppedEntry.height,
+          croppedImageWidth: croppedEntry.width,
+        } : question;
       }));
     }
 
@@ -2114,6 +2164,121 @@ function TabletOcrQuestionReviewPage({
       cancelled = true;
     };
   }, [materialPages, questions]);
+
+  useEffect(() => {
+    if (recognitionStartedRef.current) return undefined;
+    if (questions.length === 0 || questions.some((question) => !question.croppedImageData)) return undefined;
+
+    recognitionStartedRef.current = true;
+    const questionSnapshot = questions;
+
+    async function recognizeQuestionTypes() {
+      setRecognitionStatus('recognizing');
+      setRecognitionMessage('AI 正在识别题型...');
+
+      try {
+        const response = await fetch('/api/recognize-questions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            croppedMode: true,
+            subjectInfo: subject,
+            pages: questionSnapshot.map((question, index) => ({
+              pageNumber: index + 1,
+              imageData: question.croppedImageData,
+              width: question.croppedImageWidth || 1,
+              height: question.croppedImageHeight || 1,
+            })),
+            userBoxes: questionSnapshot.map((question, index) => ({
+              id: question.id,
+              x: 0,
+              y: 0,
+              width: question.croppedImageWidth || 1,
+              height: question.croppedImageHeight || 1,
+              isSelected: true,
+              pageNumber: index + 1,
+              type: 'question',
+            })),
+          }),
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error('AI 识别请求失败');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          buffer += decoder.decode(value, { stream: !done });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const eventText of events) {
+            const dataLine = eventText.split('\n').find((line) => line.startsWith('data:'));
+            if (!dataLine) continue;
+
+            const event = JSON.parse(dataLine.replace(/^data:\s*/, '')) as {
+              type?: string;
+              data?: {
+                message?: string;
+                error?: string;
+                result?: {
+                  matchedQuestions?: Array<{
+                    questionBoxId?: string;
+                    questionType?: string;
+                    optionCount?: number;
+                    blankCount?: number;
+                  }>;
+                };
+              };
+            };
+
+            if (event.type === 'progress' && event.data?.message) {
+              setRecognitionMessage(event.data.message);
+            }
+
+            if (event.type === 'error') {
+              throw new Error(event.data?.error || 'AI 识别失败');
+            }
+
+            if (event.type === 'complete') {
+              const matchedQuestions = event.data?.result?.matchedQuestions || [];
+
+              setQuestions((currentQuestions) => currentQuestions.map((question) => {
+                const matchedQuestion = matchedQuestions.find((item) => item.questionBoxId === question.id);
+                if (!matchedQuestion) return question;
+
+                const questionType = mapRecognizedQuestionType(matchedQuestion.questionType);
+                return {
+                  ...question,
+                  blankCount: getDefaultBlankCount(questionType, matchedQuestion.blankCount),
+                  optionCount: getDefaultOptionCount(questionType, matchedQuestion.optionCount),
+                  questionType,
+                  subQuestions: questionType === 'material' ? question.subQuestions : [],
+                };
+              }));
+              setRecognitionStatus('done');
+              setRecognitionMessage('AI 题型识别完成');
+              return;
+            }
+          }
+
+          if (done) break;
+        }
+      } catch (error) {
+        console.error('[TabletOCR] question type recognition failed:', error);
+        setRecognitionStatus('failed');
+        setRecognitionMessage('AI 题型识别失败，请手动核对题型');
+      }
+    }
+
+    void recognizeQuestionTypes();
+
+    return undefined;
+  }, [questions, subject]);
 
   useEffect(() => {
     if (!cropDrag) return undefined;
@@ -2482,22 +2647,28 @@ function TabletOcrQuestionReviewPage({
 
           <div className="mt-[18px]">
             <AnswerConfigPanel
-              onAddSubQuestion={() => {
+              onAddSubQuestion={(questionType) => {
                 updateQuestion(question.id, (currentQuestion) => ({
                   ...currentQuestion,
                   subQuestions: [
                     ...currentQuestion.subQuestions,
                     {
                       id: `${currentQuestion.id}-sub-${Date.now()}`,
-                      questionType: 'short_answer',
-                      optionCount: 4,
-                      blankCount: 1,
+                      blankCount: getDefaultBlankCount(questionType),
+                      optionCount: getDefaultOptionCount(questionType),
+                      questionType,
                     },
                   ],
                 }));
               }}
               onBlankCountChange={(value) => {
                 updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, blankCount: value }));
+              }}
+              onDeleteSubQuestion={(subQuestionId) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  subQuestions: currentQuestion.subQuestions.filter((subQuestion) => subQuestion.id !== subQuestionId),
+                }));
               }}
               onOptionCountChange={(value) => {
                 updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, optionCount: value }));
@@ -2578,9 +2749,20 @@ function TabletOcrQuestionReviewPage({
               mode={globalMode}
               onChange={handleGlobalModeChange}
             />
-            <span className="rounded-full bg-white px-[18px] py-[10px] text-[19px] leading-none text-[#68727d] shadow-sm">
-              共 {questions.length} 题
-            </span>
+            <div className="flex items-center gap-[12px]">
+              <span className={`rounded-full px-[18px] py-[10px] text-[19px] leading-none shadow-sm ${
+                recognitionStatus === 'failed'
+                  ? 'bg-[#fff4e8] text-[#b97412]'
+                  : recognitionStatus === 'done'
+                    ? 'bg-[#e7f7f1] text-[#2fac76]'
+                    : 'bg-white text-[#68727d]'
+              }`}>
+                {recognitionMessage}
+              </span>
+              <span className="rounded-full bg-white px-[18px] py-[10px] text-[19px] leading-none text-[#68727d] shadow-sm">
+                共 {questions.length} 题
+              </span>
+            </div>
           </div>
           <div className="absolute bottom-0 left-[28px] right-[28px] top-[104px] overflow-y-auto pb-[36px]">
             {questions.length > 0 ? (
