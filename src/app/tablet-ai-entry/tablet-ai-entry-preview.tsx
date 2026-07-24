@@ -1561,6 +1561,34 @@ function TabletConfirmDialog({
   );
 }
 
+function AddBoxModeTipDialog({
+  onConfirm,
+}: {
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 bg-black/45">
+      <section className="absolute left-1/2 top-1/2 w-[640px] -translate-x-1/2 -translate-y-1/2 rounded-[18px] bg-white px-[44px] py-[38px] shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
+        <h3 className="text-[28px] font-semibold leading-none text-[#202124]">
+          添加识别框提示
+        </h3>
+        <p className="mt-[24px] text-[21px] leading-[34px] text-[#3f4852]">
+          启用后，您可以在需要添加框的题目位置点击，即可增加空白框（无需使用时，再次点击按钮，关闭该功能即可）。
+        </p>
+        <div className="mt-[34px] flex justify-end">
+          <button
+            className="h-[48px] rounded-[8px] bg-[#23bfb2] px-[30px] text-[21px] font-medium leading-none text-white active:bg-[#12a99d]"
+            onClick={onConfirm}
+            type="button"
+          >
+            我知道了
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TabletOcrContentSelectionPage({
   images,
   mode,
@@ -1592,6 +1620,8 @@ function TabletOcrContentSelectionPage({
   const [confirmAction, setConfirmAction] = useState<TabletConfirmAction>(null);
   const [dismissedEmptyPromptPages, setDismissedEmptyPromptPages] = useState<Set<number>>(new Set());
   const [isAddBoxMode, setIsAddBoxMode] = useState(false);
+  const [hasSeenAddBoxModeTip, setHasSeenAddBoxModeTip] = useState(false);
+  const [showAddBoxModeTip, setShowAddBoxModeTip] = useState(false);
   const imageWrapRef = useRef<HTMLDivElement>(null);
   const pageWrapRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const hasMovedBoxRef = useRef(false);
@@ -1848,6 +1878,16 @@ function TabletOcrContentSelectionPage({
     setBoxes([]);
   };
 
+  const handleAddBoxModeClick = () => {
+    if (!isAddBoxMode && !hasSeenAddBoxModeTip) {
+      setHasSeenAddBoxModeTip(true);
+      setShowAddBoxModeTip(true);
+      return;
+    }
+
+    setIsAddBoxMode((currentMode) => !currentMode);
+  };
+
   const handleConfirmAction = () => {
     const action = confirmAction;
     setConfirmAction(null);
@@ -2054,9 +2094,9 @@ function TabletOcrContentSelectionPage({
             className={`h-[46px] rounded-[8px] border px-[20px] text-[20px] font-medium ${
               isAddBoxMode
                 ? 'border-[#23bfb2] bg-[#23bfb2] text-white active:bg-[#12a99d]'
-                : 'border-[#23bfb2] bg-white text-[#12a99d] active:bg-[#effcf9]'
+                : 'border-[#d7dde3] bg-white text-[#202124] active:bg-[#f4f6f7]'
             }`}
-            onClick={() => setIsAddBoxMode((currentMode) => !currentMode)}
+            onClick={handleAddBoxModeClick}
             type="button"
           >
             添加识别框
@@ -2128,6 +2168,9 @@ function TabletOcrContentSelectionPage({
         onCancel={() => setConfirmAction(null)}
         onConfirm={handleConfirmAction}
       />
+      {showAddBoxModeTip ? (
+        <AddBoxModeTipDialog onConfirm={() => setShowAddBoxModeTip(false)} />
+      ) : null}
     </div>
   );
 }
