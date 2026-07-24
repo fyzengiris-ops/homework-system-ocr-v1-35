@@ -2341,7 +2341,7 @@ function TabletOcrQuestionReviewPage({
 
     async function recognizeQuestionTypes() {
       setRecognitionStatus('recognizing');
-      setRecognitionMessage('AI 正在识别题型...');
+      setRecognitionMessage(`正在智能识别 ${questionSnapshot.length} 个区域...`);
       setQuestions((currentQuestions) => currentQuestions.map((question) => ({
         ...question,
         questionTypeStatus: question.questionTypeStatus === 'manual' ? 'manual' : 'pending',
@@ -2354,7 +2354,7 @@ function TabletOcrQuestionReviewPage({
           return applyAiQuestionType(question, matchedQuestion);
         }));
         setRecognitionStatus('done');
-        setRecognitionMessage('AI 题型识别完成');
+        setRecognitionMessage('');
       } catch (error) {
         console.error('[TabletOCR] question type recognition failed:', error);
         setQuestions((currentQuestions) => currentQuestions.map((question) => (
@@ -2766,7 +2766,7 @@ function TabletOcrQuestionReviewPage({
     const changedBoxIds = new Set(changedBoxes.map((box) => box.id));
 
     setRecognitionStatus('recognizing');
-    setRecognitionMessage(`AI 正在继续识别 ${changedBoxes.length} 个框...`);
+    setRecognitionMessage(`正在智能识别 ${changedBoxes.length} 个区域...`);
     setRecognizingReviewBoxIds(changedBoxIds);
     setQuestions((currentQuestions) => currentQuestions.map((question) => (
       changedBoxIds.has(question.id) ? { ...question, questionTypeStatus: 'pending' } : question
@@ -2816,7 +2816,7 @@ function TabletOcrQuestionReviewPage({
       });
       setRecognizingReviewBoxIds(new Set());
       setRecognitionStatus('done');
-      setRecognitionMessage('AI 继续识别完成');
+      setRecognitionMessage('');
     } catch (error) {
       console.error('[TabletOCR] continue recognition failed:', error);
       setQuestions((currentQuestions) => currentQuestions.map((question) => (
@@ -3213,6 +3213,7 @@ function TabletOcrQuestionReviewPage({
   };
 
   const selectedPendingBoxCount = reviewBoxes.filter((box) => box.selected && pendingReviewBoxIds.has(box.id)).length;
+  const shouldShowRecognitionBar = recognitionStatus === 'recognizing';
 
   return (
     <div className="absolute inset-0 z-30 bg-[#eef2f5]">
@@ -3275,21 +3276,18 @@ function TabletOcrQuestionReviewPage({
               onChange={handleGlobalModeChange}
             />
             <div className="flex items-center gap-[12px]">
-              <span className={`rounded-full px-[18px] py-[10px] text-[19px] leading-none shadow-sm ${
-                recognitionStatus === 'failed'
-                  ? 'bg-[#fff4e8] text-[#b97412]'
-                  : recognitionStatus === 'done'
-                    ? 'bg-[#e7f7f1] text-[#2fac76]'
-                    : 'bg-white text-[#68727d]'
-              }`}>
-                {recognitionMessage}
-              </span>
               <span className="rounded-full bg-white px-[18px] py-[10px] text-[19px] leading-none text-[#68727d] shadow-sm">
                 共 {questions.length} 题
               </span>
             </div>
           </div>
-          <div className="absolute bottom-0 left-[28px] right-[28px] top-[104px] overflow-y-auto pb-[36px]">
+          {shouldShowRecognitionBar ? (
+            <div className="absolute left-[28px] right-[28px] top-[82px] z-10 flex h-[48px] items-center gap-[12px] rounded-[8px] bg-[#e8f3ff] px-[18px] text-[20px] font-medium leading-none text-[#2478d4] shadow-sm">
+              <div className="h-[24px] w-[24px] animate-spin rounded-full border-[3px] border-[#bddcff] border-t-[#2478d4]" />
+              {recognitionMessage || '正在智能识别中...'}
+            </div>
+          ) : null}
+          <div className={`absolute bottom-0 left-[28px] right-[28px] overflow-y-auto pb-[36px] ${shouldShowRecognitionBar ? 'top-[148px]' : 'top-[104px]'}`}>
             {questions.length > 0 || recognizingReviewBoxIds.size > 0 ? (
               <div className="space-y-[22px]">{renderReviewQuestionItems()}</div>
             ) : (
