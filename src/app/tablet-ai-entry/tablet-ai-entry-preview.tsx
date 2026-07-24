@@ -1962,12 +1962,16 @@ function AnswerConfigPanel({
   onAddSubQuestion,
   onBlankCountChange,
   onOptionCountChange,
+  onSubQuestionBlankCountChange,
+  onSubQuestionOptionCountChange,
   onSubQuestionTypeChange,
   question,
 }: {
   onAddSubQuestion: () => void;
   onBlankCountChange: (value: number) => void;
   onOptionCountChange: (value: number) => void;
+  onSubQuestionBlankCountChange: (subQuestionId: string, value: number) => void;
+  onSubQuestionOptionCountChange: (subQuestionId: string, value: number) => void;
   onSubQuestionTypeChange: (subQuestionId: string, value: ReviewQuestionType) => void;
   question: ReviewQuestion;
 }) {
@@ -1982,32 +1986,61 @@ function AnswerConfigPanel({
   if (question.questionType === 'material') {
     return (
       <div>
-        <div className="mb-[16px] flex items-center gap-[14px]">
+        <div className="mb-[22px] flex items-center gap-[20px]">
           <button
-            className="inline-flex h-[40px] items-center gap-[8px] rounded-[7px] border border-[#d7dde3] bg-white px-[14px] text-[19px] leading-none text-[#3f4852] active:bg-[#f4f6f7]"
+            className="inline-flex h-[52px] items-center gap-[10px] rounded-[7px] border border-[#c9ced3] bg-white px-[20px] text-[24px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
             onClick={onAddSubQuestion}
             type="button"
           >
-            <Plus className="h-[20px] w-[20px]" />
+            <Plus className="h-[28px] w-[28px] stroke-[2.4]" />
             子题
           </button>
-          <span className="text-[18px] leading-none text-[#9aa3ad]">请核对子题题型</span>
+          <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#b7bbc0] text-[22px] font-semibold leading-none text-white">
+            !
+          </span>
+          <span className="text-[22px] leading-none text-[#8b8f95]">请核对子题题型</span>
         </div>
-        <div className="grid gap-[12px]">
+        <div className="grid justify-start gap-[16px]">
           {question.subQuestions.map((subQuestion, index) => (
-            <div key={subQuestion.id} className="flex min-h-[44px] items-center gap-[12px]">
-              <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-[#b8c0c8] text-[17px] leading-none text-[#68727d]">
-                {index + 1}
-              </span>
-              <QuestionTypeSelect
-                onChange={(value) => onSubQuestionTypeChange(subQuestion.id, value)}
-                value={subQuestion.questionType}
-              />
+            <div key={subQuestion.id} className="inline-flex min-h-[54px] w-fit items-center rounded-[7px] bg-[#f3f4f5] px-[16px] py-[7px]">
+              <label className="relative inline-flex h-[40px] items-center gap-[12px] pr-[12px] text-[22px] leading-none text-[#555b61]">
+                <select
+                  aria-label="子题题型"
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  onChange={(event) => onSubQuestionTypeChange(subQuestion.id, event.target.value as ReviewQuestionType)}
+                  value={subQuestion.questionType}
+                >
+                  {reviewQuestionTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="flex h-[33px] w-[33px] shrink-0 items-center justify-center rounded-full border border-[#7b8085] text-[22px] leading-none text-[#5c6166]">
+                  {index + 1}
+                </span>
+                <span>{getReviewQuestionTypeLabel(subQuestion.questionType).replace('题', '')}</span>
+                <ChevronDown className="h-[24px] w-[24px] stroke-[2.4] text-[#555b61]" />
+              </label>
               {subQuestion.questionType === 'single_choice' || subQuestion.questionType === 'multiple_choice' ? (
-                <span className="text-[18px] leading-none text-[#8b949e]">选项数：{subQuestion.optionCount}</span>
+                <>
+                  <div className="mx-[16px] h-[28px] w-px bg-[#c9ced3]" />
+                  <CountStepper
+                    label="选项数"
+                    onChange={(value) => onSubQuestionOptionCountChange(subQuestion.id, value)}
+                    value={subQuestion.optionCount}
+                  />
+                </>
               ) : null}
               {subQuestion.questionType === 'fill_blank' ? (
-                <span className="text-[18px] leading-none text-[#8b949e]">空数：{subQuestion.blankCount}</span>
+                <>
+                  <div className="mx-[16px] h-[28px] w-px bg-[#c9ced3]" />
+                  <CountStepper
+                    label="空数"
+                    onChange={(value) => onSubQuestionBlankCountChange(subQuestion.id, value)}
+                    value={subQuestion.blankCount}
+                  />
+                </>
               ) : null}
             </div>
           ))}
@@ -2469,11 +2502,34 @@ function TabletOcrQuestionReviewPage({
               onOptionCountChange={(value) => {
                 updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, optionCount: value }));
               }}
+              onSubQuestionBlankCountChange={(subQuestionId, value) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  subQuestions: currentQuestion.subQuestions.map((subQuestion) => (
+                    subQuestion.id === subQuestionId ? { ...subQuestion, blankCount: value } : subQuestion
+                  )),
+                }));
+              }}
+              onSubQuestionOptionCountChange={(subQuestionId, value) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  subQuestions: currentQuestion.subQuestions.map((subQuestion) => (
+                    subQuestion.id === subQuestionId ? { ...subQuestion, optionCount: value } : subQuestion
+                  )),
+                }));
+              }}
               onSubQuestionTypeChange={(subQuestionId, value) => {
                 updateQuestion(question.id, (currentQuestion) => ({
                   ...currentQuestion,
                   subQuestions: currentQuestion.subQuestions.map((subQuestion) => (
-                    subQuestion.id === subQuestionId ? { ...subQuestion, questionType: value } : subQuestion
+                    subQuestion.id === subQuestionId
+                      ? {
+                          ...subQuestion,
+                          blankCount: value === 'fill_blank' ? Math.max(1, subQuestion.blankCount) : subQuestion.blankCount,
+                          optionCount: value === 'multiple_choice' ? Math.max(4, subQuestion.optionCount) : subQuestion.optionCount,
+                          questionType: value,
+                        }
+                      : subQuestion
                   )),
                 }));
               }}
