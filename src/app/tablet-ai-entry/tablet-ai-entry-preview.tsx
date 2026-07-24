@@ -2879,9 +2879,7 @@ function TabletOcrQuestionReviewPage({
                   aria-label={box.selected ? '取消选中识别框' : '选中识别框'}
                   className={`absolute left-[4px] top-[4px] flex h-[22px] w-[22px] items-center justify-center rounded-[4px] border text-[13px] font-semibold leading-none shadow-[0_1px_5px_rgba(31,44,58,0.16)] ${
                     box.selected
-                      ? isQueued
-                        ? 'border-[#f2a93b] bg-[#f2a93b] text-white'
-                        : 'border-[#26c9bc] bg-[#26c9bc] text-white'
+                      ? 'border-[#26c9bc] bg-[#26c9bc] text-white'
                       : 'border-white/80 bg-[#202124]/42 text-transparent'
                   }`}
                   onClick={(event) => {
