@@ -2710,7 +2710,6 @@ function TabletOcrQuestionReviewPage({
       nextIds.add(boxId);
       return nextIds;
     });
-    setActiveQuestionId(boxId);
   };
 
   const mergeRecognizedReviewQuestions = (
@@ -2844,10 +2843,10 @@ function TabletOcrQuestionReviewPage({
         >
           <img alt="" className="h-full w-full object-fill" src={page.url} />
           {pageBoxes.map((box) => {
-            const isActive = box.id === activeQuestionId;
             const isPending = pendingReviewBoxIds.has(box.id);
             const isQueued = isPending && box.selected;
             const hasLinkedQuestion = questions.some((question) => question.id === box.id);
+            const isActive = hasLinkedQuestion && box.id === activeQuestionId;
             const pendingLabel = hasLinkedQuestion ? '待重新识别' : '待识别';
 
             return (
@@ -2865,7 +2864,7 @@ function TabletOcrQuestionReviewPage({
                 }`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  if (!hasMovedReviewBoxRef.current) {
+                  if (!hasMovedReviewBoxRef.current && hasLinkedQuestion) {
                     setActiveQuestionId((currentId) => (currentId === box.id ? '' : box.id));
                   }
                 }}
