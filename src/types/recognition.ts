@@ -154,6 +154,7 @@ export interface RecognizeRequest {
   options?: {
     extractAnswerFromAnalysis?: boolean; // 是否从解析中提取答案
     maxPages?: number; // 最大页数限制
+    validQuestionTypes?: string[]; // 当前学科支持的题型范围
   };
 }
 

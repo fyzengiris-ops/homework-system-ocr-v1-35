@@ -135,13 +135,13 @@ export async function POST(request: NextRequest) {
       return handleGlobalMatchMode(client, pages, existingQuestions, customHeaders);
     } else if (answerMode) {
       // 纯答案提取模式：对答案框进行答案提取，传入已有题目用于关联匹配
-      return handleSmartMode(client, pages, userBoxes, customHeaders, subjectInfo, undefined, existingQuestions);
+      return handleSmartMode(client, pages, userBoxes, customHeaders, subjectInfo, options.validQuestionTypes, existingQuestions);
     } else if (answerOnly) {
       // 答案匹配模式：只提取答案和解析
       return handleAnswerOnlyMode(client, pages, customHeaders);
     } else if (croppedMode) {
       // 裁剪模式：使用智能识别
-      return handleSmartMode(client, pages, userBoxes, customHeaders, subjectInfo);
+      return handleSmartMode(client, pages, userBoxes, customHeaders, subjectInfo, options.validQuestionTypes);
     } else {
       // 完整模式：原有逻辑
       return handleFullMode(client, pages, userBoxes, customHeaders);

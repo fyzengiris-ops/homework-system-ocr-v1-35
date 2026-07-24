@@ -25,6 +25,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { getValidQuestionTypes } from '@/lib/ai-recognizer';
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1200;
@@ -46,6 +47,7 @@ type OcrDetectStatus = 'loading' | 'ready' | 'failed';
 type CaptureCloseTarget = 'mode' | 'content' | 'upload' | null;
 type ReviewDisplayMode = 'recognition' | 'image';
 type ReviewQuestionType = 'single_choice' | 'multiple_choice' | 'fill_blank' | 'short_answer' | 'material' | 'judge';
+type QuestionTypeRecognitionStatus = 'pending' | 'recognized' | 'failed' | 'manual' | 'stale';
 type CropDragAction = 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se' | 'resize-n' | 'resize-s' | 'resize-w' | 'resize-e';
 
 type MaterialPage = SelectedImage & {
@@ -79,6 +81,7 @@ type ReviewQuestion = {
     height: number;
   };
   questionType: ReviewQuestionType;
+  questionTypeStatus: QuestionTypeRecognitionStatus;
   optionCount: number;
   blankCount: number;
   subQuestions: Array<{
@@ -94,6 +97,18 @@ type ReviewQuestion = {
   userCroppedImageData?: string;
 };
 
+type ReviewAiMatchedQuestion = {
+  questionBoxId?: string;
+  questionType?: string;
+  optionCount?: number;
+  blankCount?: number;
+  subQuestions?: Array<{
+    questionType?: string;
+    optionCount?: number;
+    blankCount?: number;
+  }>;
+};
+
 const SINGLE_SUBJECT = '高中数学';
 
 const reviewQuestionTypeOptions: Array<{ value: ReviewQuestionType; label: string }> = [
@@ -106,11 +121,18 @@ const reviewQuestionTypeOptions: Array<{ value: ReviewQuestionType; label: strin
 ];
 
 function mapRecognizedQuestionType(questionType: string | undefined): ReviewQuestionType {
-  if (questionType === '单选题') return 'single_choice';
-  if (questionType === '多选题') return 'multiple_choice';
-  if (questionType === '填空题') return 'fill_blank';
-  if (questionType === '材料题') return 'material';
-  if (questionType === '判断题') return 'judge';
+  const normalizedType = questionType || '';
+  if (normalizedType.includes('单选')) return 'single_choice';
+  if (normalizedType.includes('多选')) return 'multiple_choice';
+  if (normalizedType.includes('填空') || normalizedType.includes('空')) return 'fill_blank';
+  if (
+    normalizedType.includes('材料') ||
+    normalizedType.includes('综合') ||
+    normalizedType.includes('阅读理解') ||
+    normalizedType.includes('完形填空') ||
+    normalizedType.includes('任务型阅读')
+  ) return 'material';
+  if (normalizedType.includes('判断')) return 'judge';
   return 'short_answer';
 }
 
@@ -1771,11 +1793,43 @@ function createInitialReviewQuestions(boxes: RecognitionBox[], displayMode: Revi
         height: box.height,
       },
       questionType: 'short_answer',
+      questionTypeStatus: 'pending',
       optionCount: 4,
       blankCount: 1,
       subQuestions: [],
       viewMode: displayMode,
     }));
+}
+
+function applyAiQuestionType(question: ReviewQuestion, matchedQuestion: ReviewAiMatchedQuestion | undefined): ReviewQuestion {
+  if (!matchedQuestion) {
+    return {
+      ...question,
+      questionTypeStatus: 'failed',
+    };
+  }
+
+  const questionType = mapRecognizedQuestionType(matchedQuestion.questionType);
+  return {
+    ...question,
+    blankCount: getDefaultBlankCount(questionType, matchedQuestion.blankCount),
+    optionCount: getDefaultOptionCount(questionType, matchedQuestion.optionCount),
+    questionType,
+    questionTypeStatus: 'recognized',
+    subQuestions: questionType === 'material'
+      ? (matchedQuestion.subQuestions && matchedQuestion.subQuestions.length > 0
+          ? matchedQuestion.subQuestions.map((subQuestion, index) => {
+              const subQuestionType = mapRecognizedQuestionType(subQuestion.questionType);
+              return {
+                id: `${question.id}-ai-sub-${index + 1}-${Date.now()}`,
+                blankCount: getDefaultBlankCount(subQuestionType, subQuestion.blankCount),
+                optionCount: getDefaultOptionCount(subQuestionType, subQuestion.optionCount),
+                questionType: subQuestionType,
+              };
+            })
+          : question.subQuestions)
+      : [],
+  };
 }
 
 function StepSegmentedControl({
@@ -1818,14 +1872,26 @@ function StepSegmentedControl({
 }
 
 function QuestionTypeSelect({
+  status = 'recognized',
   value,
   onChange,
 }: {
+  status?: QuestionTypeRecognitionStatus;
   value: ReviewQuestionType;
   onChange: (value: ReviewQuestionType) => void;
 }) {
+  const statusLabel = status === 'pending'
+    ? '识别中'
+    : status === 'stale'
+      ? '待重新识别'
+      : status === 'failed'
+        ? '识别失败'
+        : '';
+
   return (
-    <label className="relative inline-flex h-[42px] min-w-[128px] items-center rounded-[7px] border border-[#26c9bc] bg-white pl-[14px] pr-[38px] text-[20px] font-medium leading-none text-[#16a69a]">
+    <label className={`relative inline-flex h-[42px] min-w-[128px] items-center rounded-[7px] border bg-white pl-[14px] pr-[38px] text-[20px] font-medium leading-none ${
+      statusLabel ? 'border-[#d7dde3] text-[#7b858f]' : 'border-[#26c9bc] text-[#16a69a]'
+    }`}>
       <select
         aria-label="题型"
         className="absolute inset-0 cursor-pointer opacity-0"
@@ -1838,7 +1904,7 @@ function QuestionTypeSelect({
           </option>
         ))}
       </select>
-      <span>{getReviewQuestionTypeLabel(value)}</span>
+      <span>{statusLabel || getReviewQuestionTypeLabel(value)}</span>
       <ChevronDown className="absolute right-[10px] top-1/2 h-[22px] w-[22px] -translate-y-1/2" />
     </label>
   );
@@ -2105,13 +2171,28 @@ function TabletOcrQuestionReviewPage({
   onExit: () => void;
   subject: string;
 }) {
+  const initialReviewBoxes = boxes
+    .filter((box) => box.selected)
+    .sort((firstBox, secondBox) => firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y)
+    .map((box) => ({ ...box, selected: true }));
   const [globalMode, setGlobalMode] = useState<ReviewDisplayMode>('recognition');
-  const [questions, setQuestions] = useState<ReviewQuestion[]>(() => createInitialReviewQuestions(boxes, 'recognition'));
+  const [reviewBoxes, setReviewBoxes] = useState<RecognitionBox[]>(initialReviewBoxes);
+  const [questions, setQuestions] = useState<ReviewQuestion[]>(() => createInitialReviewQuestions(initialReviewBoxes, 'recognition'));
   const [activeQuestionId, setActiveQuestionId] = useState(() => questions[0]?.id || '');
   const [openMenuQuestionId, setOpenMenuQuestionId] = useState<string | null>(null);
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
   const [recognitionStatus, setRecognitionStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
   const [recognitionMessage, setRecognitionMessage] = useState('正在准备识别题型...');
+  const [pendingReviewBoxIds, setPendingReviewBoxIds] = useState<Set<string>>(new Set());
+  const [isReviewAddBoxMode, setIsReviewAddBoxMode] = useState(false);
+  const [reviewBoxDrag, setReviewBoxDrag] = useState<{
+    id: string;
+    action: 'move' | 'resize';
+    startClientX: number;
+    startClientY: number;
+    startBox: RecognitionBox;
+    containerRect: DOMRect;
+  } | null>(null);
   const [cropRegion, setCropRegion] = useState<CropRegion | null>(null);
   const [cropDrag, setCropDrag] = useState<{
     action: CropDragAction;
@@ -2120,9 +2201,89 @@ function TabletOcrQuestionReviewPage({
     startRegion: CropRegion;
   } | null>(null);
   const leftBoxRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const reviewPageWrapRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const imageDisplaySizesRef = useRef<Map<string, { width: number; height: number }>>(new Map());
   const hasDraggedCropRef = useRef(false);
+  const hasMovedReviewBoxRef = useRef(false);
   const recognitionStartedRef = useRef(false);
+  const validQuestionTypes = getValidQuestionTypes(subject || '');
+
+  const requestAiQuestionTypes = async (questionSnapshot: ReviewQuestion[]) => {
+    const response = await fetch('/api/recognize-questions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        croppedMode: true,
+        subjectInfo: subject,
+        pages: questionSnapshot.map((question, index) => ({
+          pageNumber: index + 1,
+          imageData: question.croppedImageData,
+          width: question.croppedImageWidth || 1,
+          height: question.croppedImageHeight || 1,
+        })),
+        userBoxes: questionSnapshot.map((question, index) => ({
+          id: question.id,
+          x: 0,
+          y: 0,
+          width: question.croppedImageWidth || 1,
+          height: question.croppedImageHeight || 1,
+          isSelected: true,
+          pageNumber: index + 1,
+          type: 'question',
+        })),
+        options: {
+          validQuestionTypes,
+        },
+      }),
+    });
+
+    if (!response.ok || !response.body) {
+      throw new Error('AI 识别请求失败');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const eventText of events) {
+        const dataLine = eventText.split('\n').find((line) => line.startsWith('data:'));
+        if (!dataLine) continue;
+
+        const event = JSON.parse(dataLine.replace(/^data:\s*/, '')) as {
+          type?: string;
+          data?: {
+            message?: string;
+            error?: string;
+            result?: {
+              matchedQuestions?: ReviewAiMatchedQuestion[];
+            };
+          };
+        };
+
+        if (event.type === 'progress' && event.data?.message) {
+          setRecognitionMessage(event.data.message);
+        }
+
+        if (event.type === 'error') {
+          throw new Error(event.data?.error || 'AI 识别失败');
+        }
+
+        if (event.type === 'complete') {
+          return event.data?.result?.matchedQuestions || [];
+        }
+      }
+
+      if (done) break;
+    }
+
+    return [];
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -2175,101 +2336,24 @@ function TabletOcrQuestionReviewPage({
     async function recognizeQuestionTypes() {
       setRecognitionStatus('recognizing');
       setRecognitionMessage('AI 正在识别题型...');
+      setQuestions((currentQuestions) => currentQuestions.map((question) => ({
+        ...question,
+        questionTypeStatus: question.questionTypeStatus === 'manual' ? 'manual' : 'pending',
+      })));
 
       try {
-        const response = await fetch('/api/recognize-questions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            croppedMode: true,
-            subjectInfo: subject,
-            pages: questionSnapshot.map((question, index) => ({
-              pageNumber: index + 1,
-              imageData: question.croppedImageData,
-              width: question.croppedImageWidth || 1,
-              height: question.croppedImageHeight || 1,
-            })),
-            userBoxes: questionSnapshot.map((question, index) => ({
-              id: question.id,
-              x: 0,
-              y: 0,
-              width: question.croppedImageWidth || 1,
-              height: question.croppedImageHeight || 1,
-              isSelected: true,
-              pageNumber: index + 1,
-              type: 'question',
-            })),
-          }),
-        });
-
-        if (!response.ok || !response.body) {
-          throw new Error('AI 识别请求失败');
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { value, done } = await reader.read();
-          buffer += decoder.decode(value, { stream: !done });
-          const events = buffer.split('\n\n');
-          buffer = events.pop() || '';
-
-          for (const eventText of events) {
-            const dataLine = eventText.split('\n').find((line) => line.startsWith('data:'));
-            if (!dataLine) continue;
-
-            const event = JSON.parse(dataLine.replace(/^data:\s*/, '')) as {
-              type?: string;
-              data?: {
-                message?: string;
-                error?: string;
-                result?: {
-                  matchedQuestions?: Array<{
-                    questionBoxId?: string;
-                    questionType?: string;
-                    optionCount?: number;
-                    blankCount?: number;
-                  }>;
-                };
-              };
-            };
-
-            if (event.type === 'progress' && event.data?.message) {
-              setRecognitionMessage(event.data.message);
-            }
-
-            if (event.type === 'error') {
-              throw new Error(event.data?.error || 'AI 识别失败');
-            }
-
-            if (event.type === 'complete') {
-              const matchedQuestions = event.data?.result?.matchedQuestions || [];
-
-              setQuestions((currentQuestions) => currentQuestions.map((question) => {
-                const matchedQuestion = matchedQuestions.find((item) => item.questionBoxId === question.id);
-                if (!matchedQuestion) return question;
-
-                const questionType = mapRecognizedQuestionType(matchedQuestion.questionType);
-                return {
-                  ...question,
-                  blankCount: getDefaultBlankCount(questionType, matchedQuestion.blankCount),
-                  optionCount: getDefaultOptionCount(questionType, matchedQuestion.optionCount),
-                  questionType,
-                  subQuestions: questionType === 'material' ? question.subQuestions : [],
-                };
-              }));
-              setRecognitionStatus('done');
-              setRecognitionMessage('AI 题型识别完成');
-              return;
-            }
-          }
-
-          if (done) break;
-        }
+        const matchedQuestions = await requestAiQuestionTypes(questionSnapshot);
+        setQuestions((currentQuestions) => currentQuestions.map((question) => {
+          const matchedQuestion = matchedQuestions.find((item) => item.questionBoxId === question.id);
+          return applyAiQuestionType(question, matchedQuestion);
+        }));
+        setRecognitionStatus('done');
+        setRecognitionMessage('AI 题型识别完成');
       } catch (error) {
         console.error('[TabletOCR] question type recognition failed:', error);
+        setQuestions((currentQuestions) => currentQuestions.map((question) => (
+          question.questionTypeStatus === 'pending' ? { ...question, questionTypeStatus: 'failed' } : question
+        )));
         setRecognitionStatus('failed');
         setRecognitionMessage('AI 题型识别失败，请手动核对题型');
       }
@@ -2363,6 +2447,65 @@ function TabletOcrQuestionReviewPage({
     };
   }, [cropDrag]);
 
+  useEffect(() => {
+    if (!reviewBoxDrag) return undefined;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dx = ((event.clientX - reviewBoxDrag.startClientX) / reviewBoxDrag.containerRect.width) * 100;
+      const dy = ((event.clientY - reviewBoxDrag.startClientY) / reviewBoxDrag.containerRect.height) * 100;
+      if (
+        Math.abs(event.clientX - reviewBoxDrag.startClientX) > 3 ||
+        Math.abs(event.clientY - reviewBoxDrag.startClientY) > 3
+      ) {
+        hasMovedReviewBoxRef.current = true;
+      }
+
+      setReviewBoxes((currentBoxes) => currentBoxes.map((box) => {
+        if (box.id !== reviewBoxDrag.id) return box;
+
+        if (reviewBoxDrag.action === 'move') {
+          return {
+            ...box,
+            x: clampPercent(reviewBoxDrag.startBox.x + dx, 0, 100 - reviewBoxDrag.startBox.width),
+            y: clampPercent(reviewBoxDrag.startBox.y + dy, 0, 100 - reviewBoxDrag.startBox.height),
+          };
+        }
+
+        return {
+          ...box,
+          width: clampPercent(reviewBoxDrag.startBox.width + dx, 5, 100 - reviewBoxDrag.startBox.x),
+          height: clampPercent(reviewBoxDrag.startBox.height + dy, 3, 100 - reviewBoxDrag.startBox.y),
+        };
+      }));
+    };
+
+    const handlePointerUp = () => {
+      const changedBoxId = reviewBoxDrag.id;
+      setReviewBoxDrag(null);
+      if (hasMovedReviewBoxRef.current) {
+        setPendingReviewBoxIds((currentIds) => {
+          const nextIds = new Set(currentIds);
+          nextIds.add(changedBoxId);
+          return nextIds;
+        });
+        setQuestions((currentQuestions) => currentQuestions.map((question) => (
+          question.id === changedBoxId ? { ...question, questionTypeStatus: 'stale' } : question
+        )));
+      }
+      window.setTimeout(() => {
+        hasMovedReviewBoxRef.current = false;
+      }, 0);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [reviewBoxDrag]);
+
   const scrollLeftToQuestion = (questionId: string) => {
     window.setTimeout(() => {
       leftBoxRefs.current[questionId]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -2401,6 +2544,12 @@ function TabletOcrQuestionReviewPage({
 
   const handleDeleteQuestion = (questionId: string) => {
     setQuestions((currentQuestions) => currentQuestions.filter((question) => question.id !== questionId));
+    setReviewBoxes((currentBoxes) => currentBoxes.filter((box) => box.id !== questionId));
+    setPendingReviewBoxIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      nextIds.delete(questionId);
+      return nextIds;
+    });
     setOpenMenuQuestionId(null);
     if (activeQuestionId === questionId) {
       const nextQuestion = questions.find((question) => question.id !== questionId);
@@ -2467,36 +2616,225 @@ function TabletOcrQuestionReviewPage({
     }
   };
 
+  const startReviewBoxDrag = (
+    event: ReactPointerEvent,
+    box: RecognitionBox,
+    action: 'move' | 'resize',
+  ) => {
+    const containerRect = reviewPageWrapRefs.current[box.pageNumber]?.getBoundingClientRect();
+    if (!containerRect) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    hasMovedReviewBoxRef.current = false;
+    setActiveQuestionId(box.id);
+    setReviewBoxDrag({
+      id: box.id,
+      action,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startBox: box,
+      containerRect,
+    });
+  };
+
+  const addReviewBoxAtPoint = (page: MaterialPage, clientX: number, clientY: number) => {
+    const containerRect = reviewPageWrapRefs.current[page.pageNumber]?.getBoundingClientRect();
+    if (!containerRect) return;
+
+    const width = 72;
+    const height = 8;
+    const clickX = ((clientX - containerRect.left) / containerRect.width) * 100;
+    const clickY = ((clientY - containerRect.top) / containerRect.height) * 100;
+    const boxId = `review-manual-${Date.now()}`;
+
+    setReviewBoxes((currentBoxes) => [
+      ...currentBoxes,
+      {
+        id: boxId,
+        pageNumber: page.pageNumber,
+        x: clampPercent(clickX - width / 2, 0, 100 - width),
+        y: clampPercent(clickY - height / 2, 0, 100 - height),
+        width,
+        height,
+        selected: true,
+        source: 'manual',
+      },
+    ]);
+    setPendingReviewBoxIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      nextIds.add(boxId);
+      return nextIds;
+    });
+    setActiveQuestionId(boxId);
+  };
+
+  const mergeRecognizedReviewQuestions = (
+    currentQuestions: ReviewQuestion[],
+    incomingQuestions: ReviewQuestion[],
+    changedBoxIds: Set<string>,
+  ) => {
+    const incomingById = new Map(incomingQuestions.map((question) => [question.id, question]));
+    const nextQuestions = currentQuestions.map((question) => (
+      incomingById.has(question.id) ? incomingById.get(question.id)! : question
+    ));
+    const existingIds = new Set(nextQuestions.map((question) => question.id));
+    const sortedBoxes = [...reviewBoxes].sort((firstBox, secondBox) => (
+      firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y || firstBox.x - secondBox.x
+    ));
+
+    incomingQuestions.forEach((question) => {
+      if (existingIds.has(question.id)) return;
+
+      const boxOrderIndex = sortedBoxes.findIndex((box) => box.id === question.id);
+      const nextExistingBox = sortedBoxes.slice(boxOrderIndex + 1).find((box) => existingIds.has(box.id));
+      const insertIndex = nextExistingBox
+        ? nextQuestions.findIndex((currentQuestion) => currentQuestion.id === nextExistingBox.id)
+        : -1;
+
+      if (insertIndex >= 0) {
+        nextQuestions.splice(insertIndex, 0, question);
+      } else {
+        nextQuestions.push(question);
+      }
+      existingIds.add(question.id);
+    });
+
+    return nextQuestions.map((question) => (
+      changedBoxIds.has(question.id) ? { ...question, viewMode: globalMode } : question
+    ));
+  };
+
+  const handleContinueRecognition = async () => {
+    if (pendingReviewBoxIds.size === 0 || recognitionStatus === 'recognizing') return;
+
+    const changedBoxIds = new Set(pendingReviewBoxIds);
+    const pageByNumberForCrop = new Map(materialPages.map((page) => [page.pageNumber, page]));
+    const changedBoxes = reviewBoxes
+      .filter((box) => changedBoxIds.has(box.id))
+      .sort((firstBox, secondBox) => firstBox.pageNumber - secondBox.pageNumber || firstBox.y - secondBox.y || firstBox.x - secondBox.x);
+
+    setRecognitionStatus('recognizing');
+    setRecognitionMessage(`AI 正在继续识别 ${changedBoxes.length} 个框...`);
+    setQuestions((currentQuestions) => currentQuestions.map((question) => (
+      changedBoxIds.has(question.id) ? { ...question, questionTypeStatus: 'pending' } : question
+    )));
+
+    try {
+      const preparedQuestions = (await Promise.all(changedBoxes.map(async (box): Promise<ReviewQuestion | null> => {
+        const page = pageByNumberForCrop.get(box.pageNumber);
+        if (!page) return null;
+        const cropped = await cropMaterialQuestionImage(page, box);
+
+        return {
+          id: box.id,
+          pageNumber: box.pageNumber,
+          crop: {
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+          },
+          questionType: 'short_answer' as ReviewQuestionType,
+          questionTypeStatus: 'pending' as QuestionTypeRecognitionStatus,
+          optionCount: 4,
+          blankCount: 1,
+          subQuestions: [],
+          viewMode: globalMode,
+          croppedImageData: cropped.imageData,
+          croppedImageHeight: cropped.height,
+          croppedImageWidth: cropped.width,
+          userCroppedImageData: undefined,
+        };
+      }))).filter((question): question is ReviewQuestion => Boolean(question));
+
+      const matchedQuestions = await requestAiQuestionTypes(preparedQuestions);
+      const recognizedQuestions = preparedQuestions.map((question) => (
+        applyAiQuestionType(question, matchedQuestions.find((item) => item.questionBoxId === question.id))
+      ));
+
+      setQuestions((currentQuestions) => mergeRecognizedReviewQuestions(currentQuestions, recognizedQuestions, changedBoxIds));
+      setPendingReviewBoxIds(new Set());
+      setRecognitionStatus('done');
+      setRecognitionMessage('AI 继续识别完成');
+    } catch (error) {
+      console.error('[TabletOCR] continue recognition failed:', error);
+      setQuestions((currentQuestions) => currentQuestions.map((question) => (
+        changedBoxIds.has(question.id) ? { ...question, questionTypeStatus: 'failed' } : question
+      )));
+      setRecognitionStatus('failed');
+      setRecognitionMessage('AI 继续识别失败，请手动核对题型');
+    }
+  };
+
   const renderLeftMaterialPage = (page: MaterialPage) => {
     const frame = getMaterialPageFrameSize(page);
-    const pageQuestions = questions.filter((question) => question.pageNumber === page.pageNumber);
+    const pageBoxes = reviewBoxes.filter((box) => box.pageNumber === page.pageNumber);
 
     return (
       <div
         key={page.pageNumber}
         className="mx-auto mb-[28px] w-fit rounded-[12px] border border-[#dfe6eb] bg-white p-[12px] shadow-[0_8px_22px_rgba(31,44,58,0.09)]"
       >
-        <div className="relative bg-white" style={{ width: frame.width, height: frame.height }}>
+        <div
+          className={`relative bg-white ${isReviewAddBoxMode ? 'cursor-crosshair' : ''}`}
+          onClick={(event) => {
+            if (isReviewAddBoxMode && page.role !== 'answer') {
+              event.stopPropagation();
+              addReviewBoxAtPoint(page, event.clientX, event.clientY);
+            }
+          }}
+          ref={(node) => {
+            reviewPageWrapRefs.current[page.pageNumber] = node;
+          }}
+          style={{ width: frame.width, height: frame.height }}
+        >
           <img alt="" className="h-full w-full object-fill" src={page.url} />
-          {pageQuestions.map((question) => (
-            <div
-              key={question.id}
-              ref={(node) => {
-                leftBoxRefs.current[question.id] = node;
-              }}
-              className={`absolute border-2 ${
-                question.id === activeQuestionId
-                  ? 'border-[#23bfb2] bg-[#ddf8f4]/32 shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
-                  : 'border-[#6ed7cd] bg-[#ddf8f4]/18'
-              }`}
-              style={{
-                height: `${question.crop.height}%`,
-                left: `${question.crop.x}%`,
-                top: `${question.crop.y}%`,
-                width: `${question.crop.width}%`,
-              }}
-            />
-          ))}
+          {pageBoxes.map((box) => {
+            const isActive = box.id === activeQuestionId;
+            const isPending = pendingReviewBoxIds.has(box.id);
+
+            return (
+              <div
+                key={box.id}
+                ref={(node) => {
+                  leftBoxRefs.current[box.id] = node;
+                }}
+                className={`absolute border-2 ${
+                  isActive
+                    ? 'border-[#23bfb2] bg-[#ddf8f4]/32 shadow-[0_0_0_3px_rgba(35,191,178,0.18)]'
+                    : isPending
+                      ? 'border-[#f2a93b] bg-[#fff4df]/35'
+                      : 'border-[#6ed7cd] bg-[#ddf8f4]/18'
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (!hasMovedReviewBoxRef.current) {
+                    setActiveQuestionId(box.id);
+                  }
+                }}
+                onPointerDown={(event) => startReviewBoxDrag(event, box, 'move')}
+                style={{
+                  height: `${box.height}%`,
+                  left: `${box.x}%`,
+                  top: `${box.y}%`,
+                  width: `${box.width}%`,
+                }}
+              >
+                {isPending ? (
+                  <span className="absolute right-[4px] top-[4px] rounded-[4px] bg-[#f2a93b] px-[6px] py-[3px] text-[13px] font-medium leading-none text-white">
+                    待识别
+                  </span>
+                ) : null}
+                <button
+                  aria-label="调整识别框大小"
+                  className="absolute bottom-[-8px] right-[-8px] h-[18px] w-[18px] rounded-full border-[2px] border-white bg-[#26c9bc] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
+                  onPointerDown={(event) => startReviewBoxDrag(event, box, 'resize')}
+                  type="button"
+                />
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -2538,11 +2876,13 @@ function TabletOcrQuestionReviewPage({
               updateQuestion(question.id, (currentQuestion) => ({
                 ...currentQuestion,
                 questionType: value,
+                questionTypeStatus: 'manual',
                 subQuestions: value === 'material' && currentQuestion.subQuestions.length === 0
                   ? [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'short_answer', optionCount: 4, blankCount: 1 }]
                   : currentQuestion.subQuestions,
               }));
             }}
+            status={question.questionTypeStatus}
             value={question.questionType}
           />
           <div className="flex items-center gap-[10px]">
@@ -2724,6 +3064,18 @@ function TabletOcrQuestionReviewPage({
           <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
           <span className="text-[28px] font-semibold leading-none">核对识别结果</span>
         </button>
+        <button
+          className={`absolute left-[330px] top-[20px] inline-flex h-[48px] items-center gap-[8px] rounded-[8px] border px-[18px] text-[20px] font-medium leading-none ${
+            isReviewAddBoxMode
+              ? 'border-[#23bfb2] bg-[#e1f8f5] text-[#0f9489]'
+              : 'border-[#d7dde3] bg-white text-[#202124] active:bg-[#f3f5f6]'
+          }`}
+          onClick={() => setIsReviewAddBoxMode((currentMode) => !currentMode)}
+          type="button"
+        >
+          <Plus className="h-[22px] w-[22px]" />
+          添加识别框
+        </button>
         <div className="absolute right-[188px] top-[24px] rounded-full bg-[#e7f7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#2fac76]">
           {subject}
         </div>
@@ -2737,6 +3089,17 @@ function TabletOcrQuestionReviewPage({
       </header>
 
       <main className="absolute bottom-0 left-0 right-0 top-[88px] flex">
+        {pendingReviewBoxIds.size > 0 ? (
+          <button
+            className="absolute left-[980px] top-1/2 z-30 flex h-[82px] w-[82px] -translate-y-1/2 flex-col items-center justify-center rounded-full bg-[#23bfb2] text-[18px] font-semibold leading-[22px] text-white shadow-[0_10px_28px_rgba(35,191,178,0.36)] active:bg-[#12a99d] disabled:bg-[#b7d8d5]"
+            disabled={recognitionStatus === 'recognizing'}
+            onClick={() => void handleContinueRecognition()}
+            type="button"
+          >
+            <span>继续</span>
+            <span>识别</span>
+          </button>
+        ) : null}
         <section className="relative h-full w-[1030px] border-r border-[#dfe5ea] bg-[#f8fafb]">
           <div className="absolute inset-0 overflow-y-auto px-[28px] py-[24px]">
             {materialPages.map(renderLeftMaterialPage)}
