@@ -49,7 +49,7 @@ type SubjectMode = 'single' | 'multiple';
 type OcrDetectStatus = 'loading' | 'ready' | 'failed';
 type CaptureCloseTarget = 'mode' | 'content' | 'upload' | null;
 type ReviewDisplayMode = 'recognition' | 'image';
-type ReviewQuestionType = 'single_choice' | 'multiple_choice' | 'fill_blank' | 'short_answer' | 'material' | 'judge';
+type ReviewQuestionType = 'single_choice' | 'multiple_choice' | 'fill_blank' | 'short_answer' | 'material' | 'judge' | 'reading_comprehension' | 'cloze';
 type QuestionTypeRecognitionStatus = 'pending' | 'recognized' | 'failed' | 'manual' | 'stale';
 type CropDragAction = 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se' | 'resize-n' | 'resize-s' | 'resize-w' | 'resize-e';
 
@@ -121,18 +121,20 @@ const reviewQuestionTypeOptions: Array<{ value: ReviewQuestionType; label: strin
   { value: 'short_answer', label: '问答题' },
   { value: 'material', label: '材料题' },
   { value: 'judge', label: '判断题' },
+  { value: 'reading_comprehension', label: '阅读理解' },
+  { value: 'cloze', label: '完形填空' },
 ];
 
 function mapRecognizedQuestionType(questionType: string | undefined): ReviewQuestionType {
   const normalizedType = questionType || '';
+  if (normalizedType.includes('阅读理解')) return 'reading_comprehension';
+  if (normalizedType.includes('完形填空') || normalizedType.includes('完型填空')) return 'cloze';
   if (normalizedType.includes('单选')) return 'single_choice';
   if (normalizedType.includes('多选')) return 'multiple_choice';
   if (normalizedType.includes('填空') || normalizedType.includes('空')) return 'fill_blank';
   if (
     normalizedType.includes('材料') ||
     normalizedType.includes('综合') ||
-    normalizedType.includes('阅读理解') ||
-    normalizedType.includes('完形填空') ||
     normalizedType.includes('任务型阅读')
   ) return 'material';
   if (normalizedType.includes('判断')) return 'judge';
@@ -140,7 +142,12 @@ function mapRecognizedQuestionType(questionType: string | undefined): ReviewQues
 }
 
 function getDefaultOptionCount(questionType: ReviewQuestionType, optionCount?: number) {
-  if (questionType === 'multiple_choice' || questionType === 'single_choice') return optionCount || 4;
+  if (
+    questionType === 'multiple_choice' ||
+    questionType === 'single_choice' ||
+    questionType === 'reading_comprehension' ||
+    questionType === 'cloze'
+  ) return optionCount || 4;
   return 4;
 }
 
@@ -1813,24 +1820,32 @@ function applyAiQuestionType(question: ReviewQuestion, matchedQuestion: ReviewAi
   }
 
   const questionType = mapRecognizedQuestionType(matchedQuestion.questionType);
+  const aiSubQuestions = matchedQuestion.subQuestions && matchedQuestion.subQuestions.length > 0
+    ? matchedQuestion.subQuestions.map((subQuestion, index) => {
+        const subQuestionType = questionType === 'reading_comprehension'
+          ? 'single_choice'
+          : mapRecognizedQuestionType(subQuestion.questionType);
+        return {
+          id: `${question.id}-ai-sub-${index + 1}-${Date.now()}`,
+          blankCount: getDefaultBlankCount(subQuestionType, subQuestion.blankCount),
+          optionCount: getDefaultOptionCount(subQuestionType, subQuestion.optionCount),
+          questionType: subQuestionType,
+        };
+      })
+    : [];
+  const clozeSubQuestionCount = Math.max(
+    1,
+    matchedQuestion.blankCount || aiSubQuestions.length || question.blankCount,
+  );
+
   return {
     ...question,
-    blankCount: getDefaultBlankCount(questionType, matchedQuestion.blankCount),
+    blankCount: questionType === 'cloze' ? clozeSubQuestionCount : getDefaultBlankCount(questionType, matchedQuestion.blankCount),
     optionCount: getDefaultOptionCount(questionType, matchedQuestion.optionCount),
     questionType,
     questionTypeStatus: 'recognized',
-    subQuestions: questionType === 'material'
-      ? (matchedQuestion.subQuestions && matchedQuestion.subQuestions.length > 0
-          ? matchedQuestion.subQuestions.map((subQuestion, index) => {
-              const subQuestionType = mapRecognizedQuestionType(subQuestion.questionType);
-              return {
-                id: `${question.id}-ai-sub-${index + 1}-${Date.now()}`,
-                blankCount: getDefaultBlankCount(subQuestionType, subQuestion.blankCount),
-                optionCount: getDefaultOptionCount(subQuestionType, subQuestion.optionCount),
-                questionType: subQuestionType,
-              };
-            })
-          : question.subQuestions)
+    subQuestions: questionType === 'material' || questionType === 'reading_comprehension'
+      ? (aiSubQuestions.length > 0 ? aiSubQuestions : question.subQuestions)
       : [],
   };
 }
@@ -2046,21 +2061,26 @@ function AnswerConfigPanel({
   onBlankCountChange,
   onDeleteSubQuestion,
   onOptionCountChange,
+  onSetClozeSubQuestionCount,
   onSubQuestionBlankCountChange,
   onSubQuestionOptionCountChange,
   onSubQuestionTypeChange,
   question,
+  subject,
 }: {
   onAddSubQuestion: (questionType: ReviewQuestionType) => void;
   onBlankCountChange: (value: number) => void;
   onDeleteSubQuestion: (subQuestionId: string) => void;
   onOptionCountChange: (value: number) => void;
+  onSetClozeSubQuestionCount: (value: number) => void;
   onSubQuestionBlankCountChange: (subQuestionId: string, value: number) => void;
   onSubQuestionOptionCountChange: (subQuestionId: string, value: number) => void;
   onSubQuestionTypeChange: (subQuestionId: string, value: ReviewQuestionType) => void;
   question: ReviewQuestion;
+  subject: string;
 }) {
   const [isAddTypeMenuOpen, setIsAddTypeMenuOpen] = useState(false);
+  const isEnglishSubject = subject.includes('英语');
 
   if (question.questionType === 'single_choice' || question.questionType === 'multiple_choice') {
     return <CountStepper label="选项数" onChange={onOptionCountChange} value={question.optionCount} />;
@@ -2070,7 +2090,24 @@ function AnswerConfigPanel({
     return <CountStepper label="空数" onChange={onBlankCountChange} value={question.blankCount} />;
   }
 
-  if (question.questionType === 'material') {
+  if (isEnglishSubject && question.questionType === 'cloze') {
+    return (
+      <div className="inline-flex min-h-[54px] w-fit items-center rounded-[7px] bg-[#f3f4f5] px-[16px] py-[7px]">
+        <CountStepper label="子题数" onChange={onSetClozeSubQuestionCount} value={question.blankCount} />
+        <div className="mx-[16px] h-[28px] w-px bg-[#c9ced3]" />
+        <label className="relative inline-flex h-[40px] min-w-[124px] items-center rounded-[7px] border border-[#d7dde3] bg-[#eceff1] pl-[14px] pr-[36px] text-[20px] leading-none text-[#8b949e]">
+          <span>单选</span>
+          <ChevronDown className="absolute right-[10px] top-1/2 h-[22px] w-[22px] -translate-y-1/2 text-[#a5adb5]" />
+        </label>
+        <div className="mx-[16px] h-[28px] w-px bg-[#c9ced3]" />
+        <CountStepper label="选项数" onChange={onOptionCountChange} value={question.optionCount} />
+      </div>
+    );
+  }
+
+  if (question.questionType === 'material' || (isEnglishSubject && question.questionType === 'reading_comprehension')) {
+    const isFixedSingleChoiceSubQuestion = isEnglishSubject && question.questionType === 'reading_comprehension';
+
     return (
       <div>
         <div className="mb-[22px] flex items-center gap-[20px]">
@@ -2085,7 +2122,7 @@ function AnswerConfigPanel({
             </button>
             {isAddTypeMenuOpen ? (
               <div className="absolute left-0 top-[60px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
-                {reviewQuestionTypeOptions.map((option) => (
+                {(isFixedSingleChoiceSubQuestion ? [{ value: 'single_choice' as ReviewQuestionType, label: '单选题' }] : reviewQuestionTypeOptions).map((option) => (
                   <button
                     key={option.value}
                     className="h-[46px] w-full px-[18px] text-left text-[20px] leading-none text-[#4d5258] active:bg-[#f3f5f6]"
@@ -2101,32 +2138,42 @@ function AnswerConfigPanel({
               </div>
             ) : null}
           </div>
-          <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#b7bbc0] text-[22px] font-semibold leading-none text-white">
-            !
-          </span>
-          <span className="text-[22px] leading-none text-[#8b8f95]">请核对子题题型</span>
+          {isFixedSingleChoiceSubQuestion ? (
+            <span className="text-[22px] leading-none text-[#8b8f95]">子题固定为单选题</span>
+          ) : (
+            <>
+              <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#b7bbc0] text-[22px] font-semibold leading-none text-white">
+                !
+              </span>
+              <span className="text-[22px] leading-none text-[#8b8f95]">请核对子题题型</span>
+            </>
+          )}
         </div>
         <div className="grid justify-start gap-[16px]">
           {question.subQuestions.map((subQuestion, index) => (
             <div key={subQuestion.id} className="inline-flex min-h-[54px] w-fit items-center rounded-[7px] bg-[#f3f4f5] px-[16px] py-[7px]">
-              <label className="relative inline-flex h-[40px] items-center gap-[12px] pr-[12px] text-[22px] leading-none text-[#555b61]">
-                <select
-                  aria-label="子题题型"
-                  className="absolute inset-0 cursor-pointer opacity-0"
-                  onChange={(event) => onSubQuestionTypeChange(subQuestion.id, event.target.value as ReviewQuestionType)}
-                  value={subQuestion.questionType}
-                >
-                  {reviewQuestionTypeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+              <label className={`relative inline-flex h-[40px] items-center gap-[12px] pr-[12px] text-[22px] leading-none ${isFixedSingleChoiceSubQuestion ? 'text-[#6c737a]' : 'text-[#555b61]'}`}>
+                {isFixedSingleChoiceSubQuestion ? null : (
+                  <select
+                    aria-label="子题题型"
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                    onChange={(event) => onSubQuestionTypeChange(subQuestion.id, event.target.value as ReviewQuestionType)}
+                    value={subQuestion.questionType}
+                  >
+                    {reviewQuestionTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <span className="flex h-[33px] w-[33px] shrink-0 items-center justify-center rounded-full border border-[#7b8085] text-[22px] leading-none text-[#5c6166]">
                   {index + 1}
                 </span>
-                <span>{getReviewQuestionTypeLabel(subQuestion.questionType).replace('题', '')}</span>
-                <ChevronDown className="h-[24px] w-[24px] stroke-[2.4] text-[#555b61]" />
+                <span>{isFixedSingleChoiceSubQuestion ? '单选' : getReviewQuestionTypeLabel(subQuestion.questionType).replace('题', '')}</span>
+                {isFixedSingleChoiceSubQuestion ? null : (
+                  <ChevronDown className="h-[24px] w-[24px] stroke-[2.4] text-[#555b61]" />
+                )}
               </label>
               {subQuestion.questionType === 'single_choice' || subQuestion.questionType === 'multiple_choice' ? (
                 <>
@@ -3001,11 +3048,23 @@ function TabletOcrQuestionReviewPage({
             onChange={(value) => {
               updateQuestion(question.id, (currentQuestion) => ({
                 ...currentQuestion,
+                blankCount: value === 'cloze' ? Math.max(1, currentQuestion.blankCount) : currentQuestion.blankCount,
+                optionCount: value === 'cloze' || value === 'reading_comprehension' ? Math.max(4, currentQuestion.optionCount) : currentQuestion.optionCount,
                 questionType: value,
                 questionTypeStatus: 'manual',
                 subQuestions: value === 'material' && currentQuestion.subQuestions.length === 0
                   ? [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'short_answer', optionCount: 4, blankCount: 1 }]
-                  : currentQuestion.subQuestions,
+                  : value === 'reading_comprehension'
+                    ? (currentQuestion.subQuestions.length > 0
+                        ? currentQuestion.subQuestions.map((subQuestion) => ({
+                            ...subQuestion,
+                            optionCount: Math.max(4, subQuestion.optionCount),
+                            questionType: 'single_choice' as ReviewQuestionType,
+                          }))
+                        : [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'single_choice', optionCount: 4, blankCount: 1 }])
+                    : value === 'cloze'
+                      ? []
+                      : currentQuestion.subQuestions,
               }));
             }}
             status={question.questionTypeStatus}
@@ -3141,6 +3200,9 @@ function TabletOcrQuestionReviewPage({
               onOptionCountChange={(value) => {
                 updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, optionCount: value }));
               }}
+              onSetClozeSubQuestionCount={(value) => {
+                updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, blankCount: value }));
+              }}
               onSubQuestionBlankCountChange={(subQuestionId, value) => {
                 updateQuestion(question.id, (currentQuestion) => ({
                   ...currentQuestion,
@@ -3173,6 +3235,7 @@ function TabletOcrQuestionReviewPage({
                 }));
               }}
               question={question}
+              subject={subject}
             />
           </div>
         </div>
