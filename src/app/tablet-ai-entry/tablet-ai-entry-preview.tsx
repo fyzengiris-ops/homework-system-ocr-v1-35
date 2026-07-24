@@ -1918,7 +1918,7 @@ function TabletOcrContentSelectionPage({
             <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-[16px] bg-white/92 px-[42px] py-[34px] shadow-[0_12px_34px_rgba(31,44,58,0.16)]">
               <button
                 aria-label="关闭未识别提示"
-                className="absolute right-[10px] top-[10px] flex h-[32px] w-[32px] items-center justify-center rounded-full bg-[#eef2f5] text-[#3f4852] shadow-[0_2px_8px_rgba(31,44,58,0.14)] active:bg-[#dfe5ea]"
+                className="absolute right-[12px] top-[12px] flex h-[32px] w-[32px] items-center justify-center text-[#3f4852] active:text-[#202124]"
                 onClick={() => {
                   setDismissedEmptyPromptPages((currentPages) => {
                     const nextPages = new Set(currentPages);
@@ -1929,7 +1929,7 @@ function TabletOcrContentSelectionPage({
                 onPointerDown={(event) => event.stopPropagation()}
                 type="button"
               >
-                <X className="h-[20px] w-[20px] stroke-[2.4]" />
+                <X className="h-[22px] w-[22px] stroke-[2.5]" />
               </button>
               <div className="text-[24px] font-medium leading-none text-[#202124]">未识别到题目框</div>
               <button
