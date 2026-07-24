@@ -20,7 +20,6 @@ import {
   Mic2,
   Minus,
   Plus,
-  Scissors,
   Search,
   SendHorizonal,
   Trash2,
@@ -1809,59 +1808,66 @@ function CroppedQuestionImage({
 
   const frame = getMaterialPageFrameSize(page);
   const cropAspectRatio = (page.naturalHeight * crop.height) / (page.naturalWidth * crop.width);
-  const displayWidth = Math.min(
+  const imageDisplayWidth = Math.min(
     REVIEW_QUESTION_IMAGE_MAX_WIDTH,
     Math.max(240, frame.width * (crop.width / 100) * REVIEW_QUESTION_IMAGE_SOURCE_SCALE),
   );
-  const displayHeight = Math.max(108, displayWidth * cropAspectRatio);
-  const fullImageWidth = displayWidth * (100 / crop.width);
-  const fullImageHeight = displayHeight * (100 / crop.height);
+  const imageDisplayHeight = Math.max(108, imageDisplayWidth * cropAspectRatio);
+  const fullImageWidth = imageDisplayWidth * (100 / crop.width);
+  const fullImageHeight = imageDisplayHeight * (100 / crop.height);
+  const cropHandleClass = 'absolute flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border-[2px] border-white bg-[#2f80ed] shadow-[0_1px_5px_rgba(47,128,237,0.42)]';
 
   return (
     <div
-      className={`relative overflow-hidden rounded-[8px] border bg-white text-left ${
-        isEditing ? 'border-[3px] border-[#23bfb2]' : 'border-[#dfe4e8] active:border-[#23bfb2]'
-      }`}
+      className="relative flex w-full justify-center rounded-[8px] border border-[#dfe4e8] bg-white px-[18px] py-[16px]"
       onClick={onClick}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onClick();
       }}
-      onPointerDown={isEditing ? onMoveStart : undefined}
       role="button"
-      style={{
-        height: displayHeight,
-        maxWidth: '100%',
-        width: displayWidth,
-      }}
       tabIndex={0}
     >
-      <img
-        alt=""
-        className="absolute max-w-none object-fill"
-        src={page.url}
+      <div
+        className={`relative overflow-visible bg-white ${isEditing ? 'cursor-move' : ''}`}
+        onPointerDown={isEditing ? onMoveStart : undefined}
         style={{
-          height: fullImageHeight,
-          left: -fullImageWidth * (crop.x / 100),
-          top: -fullImageHeight * (crop.y / 100),
-          width: fullImageWidth,
+          height: imageDisplayHeight,
+          width: imageDisplayWidth,
         }}
-      />
-      {isEditing ? (
-        <>
-          <div className="absolute inset-0 border-[2px] border-dashed border-[#23bfb2]" />
-          <div className="absolute left-[14px] top-[14px] inline-flex items-center gap-[8px] rounded-full bg-[#202124]/78 px-[14px] py-[9px] text-[17px] font-medium leading-none text-white">
-            <Scissors className="h-[18px] w-[18px]" />
-            裁剪中
-          </div>
-          <button
-            aria-label="调整裁剪范围"
-            className="absolute bottom-[10px] right-[10px] h-[32px] w-[32px] rounded-full border-[3px] border-white bg-[#23bfb2] shadow-[0_3px_12px_rgba(31,44,58,0.24)]"
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={onResizeStart}
-            type="button"
-          />
-        </>
-      ) : null}
+      >
+        <img
+          alt=""
+          className="absolute max-w-none object-fill"
+          src={page.url}
+          style={{
+            height: fullImageHeight,
+            left: -fullImageWidth * (crop.x / 100),
+            top: -fullImageHeight * (crop.y / 100),
+            width: fullImageWidth,
+          }}
+        />
+        {isEditing ? (
+          <>
+            <div className="absolute inset-0 border-[2px] border-[#2f80ed]" />
+            <div className={`${cropHandleClass} left-[-9px] top-[-9px]`} />
+            <div className={`${cropHandleClass} left-1/2 top-[-9px] -translate-x-1/2`} />
+            <div className={`${cropHandleClass} right-[-9px] top-[-9px]`} />
+            <div className={`${cropHandleClass} left-[-9px] top-1/2 -translate-y-1/2`} />
+            <div className={`${cropHandleClass} right-[-9px] top-1/2 -translate-y-1/2`} />
+            <div className={`${cropHandleClass} bottom-[-9px] left-[-9px]`} />
+            <div className={`${cropHandleClass} bottom-[-9px] left-1/2 -translate-x-1/2`} />
+            <button
+              aria-label="调整裁剪范围"
+              className={`${cropHandleClass} bottom-[-9px] right-[-9px]`}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={onResizeStart}
+              type="button"
+            />
+            <div className="absolute left-1/2 top-[-42px] h-[34px] w-px -translate-x-1/2 bg-[#2f80ed]" />
+            <div className="absolute left-1/2 top-[-58px] h-[22px] w-[22px] -translate-x-1/2 rounded-full border-[2px] border-white bg-[#2f80ed] shadow-[0_1px_5px_rgba(47,128,237,0.42)]" />
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1954,6 +1960,7 @@ function TabletOcrQuestionReviewPage({
     startCrop: ReviewQuestion['crop'];
   } | null>(null);
   const leftBoxRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const hasDraggedCropRef = useRef(false);
 
   useEffect(() => {
     if (!cropDrag) return undefined;
@@ -1961,6 +1968,9 @@ function TabletOcrQuestionReviewPage({
     const handlePointerMove = (event: PointerEvent) => {
       const dx = ((event.clientX - cropDrag.startClientX) / cropDrag.containerRect.width) * cropDrag.startCrop.width;
       const dy = ((event.clientY - cropDrag.startClientY) / cropDrag.containerRect.height) * cropDrag.startCrop.height;
+      if (Math.abs(event.clientX - cropDrag.startClientX) > 3 || Math.abs(event.clientY - cropDrag.startClientY) > 3) {
+        hasDraggedCropRef.current = true;
+      }
 
       if (cropDrag.action === 'move') {
         setDraftCrop({
@@ -2036,7 +2046,18 @@ function TabletOcrQuestionReviewPage({
   };
 
   const handleStartCrop = (question: ReviewQuestion) => {
-    if (editingCropQuestionId === question.id) return;
+    if (hasDraggedCropRef.current) {
+      window.setTimeout(() => {
+        hasDraggedCropRef.current = false;
+      }, 0);
+      return;
+    }
+
+    if (editingCropQuestionId === question.id) {
+      handleCancelCrop();
+      return;
+    }
+
     setActiveQuestionId(question.id);
     setEditingCropQuestionId(question.id);
     setDraftCrop(question.crop);
@@ -2198,6 +2219,7 @@ function TabletOcrQuestionReviewPage({
                   startClientY: event.clientY,
                   startCrop: draftCrop,
                 });
+                hasDraggedCropRef.current = false;
               }}
               onResizeStart={(event) => {
                 if (!draftCrop) return;
@@ -2210,6 +2232,7 @@ function TabletOcrQuestionReviewPage({
                   startClientY: event.clientY,
                   startCrop: draftCrop,
                 });
+                hasDraggedCropRef.current = false;
               }}
               page={page}
             />
