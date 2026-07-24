@@ -32,6 +32,8 @@ const CANVAS_HEIGHT = 1200;
 const OCR_BOX_SELECT_ICON_SAFE_WIDTH = 24;
 const MATERIAL_PAGE_MAX_WIDTH = 890;
 const MATERIAL_PAGE_MAX_HEIGHT = 830;
+const REVIEW_QUESTION_IMAGE_MAX_WIDTH = 760;
+const REVIEW_QUESTION_IMAGE_SOURCE_SCALE = 1.12;
 
 type SelectedImage = {
   name: string;
@@ -1675,9 +1677,17 @@ function createInitialReviewQuestions(boxes: RecognitionBox[], displayMode: Revi
 }
 
 function StepSegmentedControl({
+  labels = {
+    recognition: '识别',
+    image: '图片',
+  },
   mode,
   onChange,
 }: {
+  labels?: {
+    recognition: string;
+    image: string;
+  };
   mode: ReviewDisplayMode;
   onChange: (mode: ReviewDisplayMode) => void;
 }) {
@@ -1690,7 +1700,7 @@ function StepSegmentedControl({
         onClick={() => onChange('recognition')}
         type="button"
       >
-        识别
+        {labels.recognition}
       </button>
       <button
         className={`h-[34px] rounded-[6px] px-[15px] text-[18px] font-medium leading-none ${
@@ -1699,7 +1709,7 @@ function StepSegmentedControl({
         onClick={() => onChange('image')}
         type="button"
       >
-        图片
+        {labels.image}
       </button>
     </div>
   );
@@ -1770,12 +1780,14 @@ function CroppedQuestionImage({
   crop,
   isEditing,
   onClick,
+  onMoveStart,
   onResizeStart,
   page,
 }: {
   crop: ReviewQuestion['crop'];
   isEditing: boolean;
   onClick: () => void;
+  onMoveStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   page: MaterialPage | undefined;
 }) {
@@ -1795,16 +1807,32 @@ function CroppedQuestionImage({
     );
   }
 
+  const frame = getMaterialPageFrameSize(page);
+  const cropAspectRatio = (page.naturalHeight * crop.height) / (page.naturalWidth * crop.width);
+  const displayWidth = Math.min(
+    REVIEW_QUESTION_IMAGE_MAX_WIDTH,
+    Math.max(240, frame.width * (crop.width / 100) * REVIEW_QUESTION_IMAGE_SOURCE_SCALE),
+  );
+  const displayHeight = Math.max(108, displayWidth * cropAspectRatio);
+  const fullImageWidth = displayWidth * (100 / crop.width);
+  const fullImageHeight = displayHeight * (100 / crop.height);
+
   return (
     <div
-      className={`relative h-[204px] w-full overflow-hidden rounded-[8px] border bg-white text-left ${
+      className={`relative overflow-hidden rounded-[8px] border bg-white text-left ${
         isEditing ? 'border-[3px] border-[#23bfb2]' : 'border-[#dfe4e8] active:border-[#23bfb2]'
       }`}
       onClick={onClick}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onClick();
       }}
+      onPointerDown={isEditing ? onMoveStart : undefined}
       role="button"
+      style={{
+        height: displayHeight,
+        maxWidth: '100%',
+        width: displayWidth,
+      }}
       tabIndex={0}
     >
       <img
@@ -1812,10 +1840,10 @@ function CroppedQuestionImage({
         className="absolute max-w-none object-fill"
         src={page.url}
         style={{
-          height: `${10000 / crop.height}%`,
-          left: `${-(crop.x / crop.width) * 100}%`,
-          top: `${-(crop.y / crop.height) * 100}%`,
-          width: `${10000 / crop.width}%`,
+          height: fullImageHeight,
+          left: -fullImageWidth * (crop.x / 100),
+          top: -fullImageHeight * (crop.y / 100),
+          width: fullImageWidth,
         }}
       />
       {isEditing ? (
@@ -1919,6 +1947,7 @@ function TabletOcrQuestionReviewPage({
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
   const [draftCrop, setDraftCrop] = useState<ReviewQuestion['crop'] | null>(null);
   const [cropDrag, setCropDrag] = useState<{
+    action: 'move' | 'resize';
     containerRect: DOMRect;
     startClientX: number;
     startClientY: number;
@@ -1930,13 +1959,22 @@ function TabletOcrQuestionReviewPage({
     if (!cropDrag) return undefined;
 
     const handlePointerMove = (event: PointerEvent) => {
-      const widthDelta = ((event.clientX - cropDrag.startClientX) / cropDrag.containerRect.width) * cropDrag.startCrop.width;
-      const heightDelta = ((event.clientY - cropDrag.startClientY) / cropDrag.containerRect.height) * cropDrag.startCrop.height;
+      const dx = ((event.clientX - cropDrag.startClientX) / cropDrag.containerRect.width) * cropDrag.startCrop.width;
+      const dy = ((event.clientY - cropDrag.startClientY) / cropDrag.containerRect.height) * cropDrag.startCrop.height;
+
+      if (cropDrag.action === 'move') {
+        setDraftCrop({
+          ...cropDrag.startCrop,
+          x: clampPercent(cropDrag.startCrop.x + dx, 0, 100 - cropDrag.startCrop.width),
+          y: clampPercent(cropDrag.startCrop.y + dy, 0, 100 - cropDrag.startCrop.height),
+        });
+        return;
+      }
 
       setDraftCrop({
         ...cropDrag.startCrop,
-        width: clampPercent(cropDrag.startCrop.width + widthDelta, 5, 100 - cropDrag.startCrop.x),
-        height: clampPercent(cropDrag.startCrop.height + heightDelta, 3, 100 - cropDrag.startCrop.y),
+        width: clampPercent(cropDrag.startCrop.width + dx, 5, 100 - cropDrag.startCrop.x),
+        height: clampPercent(cropDrag.startCrop.height + dy, 3, 100 - cropDrag.startCrop.y),
       });
     };
     const handlePointerUp = () => setCropDrag(null);
@@ -1998,6 +2036,7 @@ function TabletOcrQuestionReviewPage({
   };
 
   const handleStartCrop = (question: ReviewQuestion) => {
+    if (editingCropQuestionId === question.id) return;
     setActiveQuestionId(question.id);
     setEditingCropQuestionId(question.id);
     setDraftCrop(question.crop);
@@ -2073,8 +2112,10 @@ function TabletOcrQuestionReviewPage({
     return (
       <section
         key={question.id}
-        className={`relative rounded-[10px] bg-white shadow-[0_6px_18px_rgba(31,44,58,0.06)] ${
-          isActive ? 'outline outline-[3px] outline-[#23bfb2]' : ''
+        className={`relative rounded-[10px] border-[3px] bg-white shadow-[0_6px_18px_rgba(31,44,58,0.06)] ${
+          isActive
+            ? 'border-[#23bfb2] shadow-[0_8px_24px_rgba(35,191,178,0.18)]'
+            : 'border-transparent'
         }`}
         onClick={() => handleSelectQuestion(question.id)}
       >
@@ -2146,11 +2187,24 @@ function TabletOcrQuestionReviewPage({
               crop={cropForDisplay}
               isEditing={isCropEditing}
               onClick={() => handleStartCrop(question)}
+              onMoveStart={(event) => {
+                if (!draftCrop) return;
+                event.preventDefault();
+                event.stopPropagation();
+                setCropDrag({
+                  action: 'move',
+                  containerRect: event.currentTarget.getBoundingClientRect(),
+                  startClientX: event.clientX,
+                  startClientY: event.clientY,
+                  startCrop: draftCrop,
+                });
+              }}
               onResizeStart={(event) => {
                 if (!draftCrop) return;
                 event.preventDefault();
                 event.stopPropagation();
                 setCropDrag({
+                  action: 'resize',
                   containerRect: event.currentTarget.parentElement?.getBoundingClientRect() || event.currentTarget.getBoundingClientRect(),
                   startClientX: event.clientX,
                   startClientY: event.clientY,
@@ -2239,26 +2293,6 @@ function TabletOcrQuestionReviewPage({
           <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
           <span className="text-[28px] font-semibold leading-none">核对识别结果</span>
         </button>
-        <div className="absolute left-[344px] top-[20px] flex h-[48px] items-center gap-[12px] rounded-full bg-[#eef1f3] p-[4px]">
-          <button
-            className={`h-[40px] rounded-full px-[22px] text-[20px] font-medium leading-none ${
-              globalMode === 'recognition' ? 'bg-white text-[#202124] shadow-sm' : 'text-[#68727d]'
-            }`}
-            onClick={() => handleGlobalModeChange('recognition')}
-            type="button"
-          >
-            识别模式
-          </button>
-          <button
-            className={`h-[40px] rounded-full px-[22px] text-[20px] font-medium leading-none ${
-              globalMode === 'image' ? 'bg-white text-[#202124] shadow-sm' : 'text-[#68727d]'
-            }`}
-            onClick={() => handleGlobalModeChange('image')}
-            type="button"
-          >
-            图片模式
-          </button>
-        </div>
         <div className="absolute right-[188px] top-[24px] rounded-full bg-[#e7f7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#2fac76]">
           {subject}
         </div>
@@ -2279,12 +2313,11 @@ function TabletOcrQuestionReviewPage({
         </section>
         <section className="relative flex-1 bg-[#eef2f5]">
           <div className="absolute left-[28px] right-[28px] top-[24px] flex items-center justify-between">
-            <div>
-              <h2 className="text-[27px] font-semibold leading-none text-[#202124]">仅题目核对</h2>
-              <p className="mt-[11px] text-[19px] leading-none text-[#7b838c]">
-                单击右侧题目框，左侧自动定位对应切题区域
-              </p>
-            </div>
+            <StepSegmentedControl
+              labels={{ recognition: '识别模式', image: '图片模式' }}
+              mode={globalMode}
+              onChange={handleGlobalModeChange}
+            />
             <span className="rounded-full bg-white px-[18px] py-[10px] text-[19px] leading-none text-[#68727d] shadow-sm">
               共 {questions.length} 题
             </span>
