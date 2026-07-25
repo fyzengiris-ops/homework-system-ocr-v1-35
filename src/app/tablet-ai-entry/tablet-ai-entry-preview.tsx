@@ -2095,11 +2095,13 @@ function AnswerConfigPanel({
       <div className="inline-flex min-h-[54px] w-fit items-center rounded-[7px] bg-[#f3f4f5] px-[16px] py-[7px]">
         <CountStepper label="子题数" onChange={onSetClozeSubQuestionCount} value={question.blankCount} />
         <div className="mx-[16px] h-[28px] w-px bg-[#c9ced3]" />
-        <label className="relative inline-flex h-[40px] min-w-[156px] items-center rounded-[7px] border border-[#d7dde3] bg-[#eceff1] pl-[14px] pr-[36px] text-[20px] leading-none text-[#8b949e]">
-          <span className="mr-[10px] text-[18px]">题型</span>
-          <span>单选</span>
-          <ChevronDown className="absolute right-[10px] top-1/2 h-[22px] w-[22px] -translate-y-1/2 text-[#a5adb5]" />
-        </label>
+        <div className="inline-flex h-[40px] items-center gap-[10px]">
+          <span className="text-[18px] leading-none text-[#68727d]">题型：</span>
+          <label className="relative inline-flex h-[40px] min-w-[100px] items-center rounded-[7px] border border-[#d7dde3] bg-[#eceff1] pl-[14px] pr-[36px] text-[20px] leading-none text-[#8b949e]">
+            <span>单选</span>
+            <ChevronDown className="absolute right-[10px] top-1/2 h-[22px] w-[22px] -translate-y-1/2 text-[#a5adb5]" />
+          </label>
+        </div>
         <div className="mx-[16px] h-[28px] w-px bg-[#c9ced3]" />
         <CountStepper label="选项数" onChange={onOptionCountChange} value={question.optionCount} />
       </div>
