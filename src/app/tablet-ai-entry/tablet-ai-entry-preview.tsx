@@ -2095,7 +2095,8 @@ function AnswerConfigPanel({
       <div className="inline-flex min-h-[54px] w-fit items-center rounded-[7px] bg-[#f3f4f5] px-[16px] py-[7px]">
         <CountStepper label="子题数" onChange={onSetClozeSubQuestionCount} value={question.blankCount} />
         <div className="mx-[16px] h-[28px] w-px bg-[#c9ced3]" />
-        <label className="relative inline-flex h-[40px] min-w-[124px] items-center rounded-[7px] border border-[#d7dde3] bg-[#eceff1] pl-[14px] pr-[36px] text-[20px] leading-none text-[#8b949e]">
+        <label className="relative inline-flex h-[40px] min-w-[156px] items-center rounded-[7px] border border-[#d7dde3] bg-[#eceff1] pl-[14px] pr-[36px] text-[20px] leading-none text-[#8b949e]">
+          <span className="mr-[10px] text-[18px]">题型</span>
           <span>单选</span>
           <ChevronDown className="absolute right-[10px] top-1/2 h-[22px] w-[22px] -translate-y-1/2 text-[#a5adb5]" />
         </label>
@@ -2114,15 +2115,22 @@ function AnswerConfigPanel({
           <div className="relative">
             <button
               className="inline-flex h-[52px] items-center gap-[10px] rounded-[7px] border border-[#c9ced3] bg-white px-[20px] text-[24px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
-              onClick={() => setIsAddTypeMenuOpen((isOpen) => !isOpen)}
+              onClick={() => {
+                if (isFixedSingleChoiceSubQuestion) {
+                  onAddSubQuestion('single_choice');
+                  setIsAddTypeMenuOpen(false);
+                  return;
+                }
+                setIsAddTypeMenuOpen((isOpen) => !isOpen);
+              }}
               type="button"
             >
               <Plus className="h-[28px] w-[28px] stroke-[2.4]" />
               子题
             </button>
-            {isAddTypeMenuOpen ? (
+            {isAddTypeMenuOpen && !isFixedSingleChoiceSubQuestion ? (
               <div className="absolute left-0 top-[60px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
-                {(isFixedSingleChoiceSubQuestion ? [{ value: 'single_choice' as ReviewQuestionType, label: '单选题' }] : reviewQuestionTypeOptions).map((option) => (
+                {reviewQuestionTypeOptions.map((option) => (
                   <button
                     key={option.value}
                     className="h-[46px] w-full px-[18px] text-left text-[20px] leading-none text-[#4d5258] active:bg-[#f3f5f6]"
