@@ -2338,10 +2338,10 @@ function AnswerConfigPanel({
 
     return (
       <div>
-        <div className="mb-[22px] flex items-center gap-[20px]">
+        <div className="mb-[18px] flex items-center gap-[14px]">
           <div className="relative">
             <button
-              className="inline-flex h-[52px] items-center gap-[10px] rounded-[7px] border border-[#c9ced3] bg-white px-[20px] text-[24px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
+              className="inline-flex h-[44px] items-center gap-[8px] rounded-[6px] border border-[#c9ced3] bg-white px-[16px] text-[20px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
               onClick={() => {
                 if (isFixedSingleChoiceSubQuestion) {
                   onAddSubQuestion('single_choice');
@@ -2352,11 +2352,11 @@ function AnswerConfigPanel({
               }}
               type="button"
             >
-              <Plus className="h-[28px] w-[28px] stroke-[2.4]" />
+              <Plus className="h-[22px] w-[22px] stroke-[2.4]" />
               子题
             </button>
             {isAddTypeMenuOpen && !isFixedSingleChoiceSubQuestion ? (
-              <div className="absolute left-0 top-[60px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
+              <div className="absolute left-0 top-[52px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
                 {reviewQuestionTypeOptions.map((option) => (
                   <button
                     key={option.value}
@@ -2374,13 +2374,13 @@ function AnswerConfigPanel({
             ) : null}
           </div>
           {isFixedSingleChoiceSubQuestion ? (
-            <span className="text-[22px] leading-none text-[#8b8f95]">子题固定为单选题</span>
+            <span className="text-[20px] leading-none text-[#8b8f95]">子题固定为单选题</span>
           ) : (
             <>
-              <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#b7bbc0] text-[22px] font-semibold leading-none text-white">
+              <span className="flex h-[24px] w-[24px] items-center justify-center rounded-full bg-[#b7bbc0] text-[18px] font-semibold leading-none text-white">
                 !
               </span>
-              <span className="text-[22px] leading-none text-[#8b8f95]">请核对子题题型</span>
+              <span className="text-[20px] leading-none text-[#8b8f95]">请核对子题题型</span>
             </>
           )}
         </div>
@@ -3590,9 +3590,9 @@ function TabletOcrQuestionReviewPage({
     const isMenuOpen = recognitionAddSubMenu?.questionId === question.id && recognitionAddSubMenu.afterIndex === afterIndex;
 
     return (
-      <div className="relative flex items-center justify-start gap-[18px] pb-[12px] pt-[2px]" onClick={(event) => event.stopPropagation()}>
+      <div className="relative flex items-center justify-start gap-[14px] pb-[12px] pt-[2px]" onClick={(event) => event.stopPropagation()}>
         <button
-          className="inline-flex h-[52px] items-center gap-[10px] rounded-[7px] border border-[#c9ced3] bg-white px-[20px] text-[24px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
+          className="inline-flex h-[44px] items-center gap-[8px] rounded-[6px] border border-[#c9ced3] bg-white px-[16px] text-[20px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
           onClick={() => {
             if (isFixedSingleChoice) {
               insertRecognitionSubQuestion(question.id, afterIndex, 'single_choice');
@@ -3602,15 +3602,15 @@ function TabletOcrQuestionReviewPage({
           }}
           type="button"
         >
-          <Plus className="h-[28px] w-[28px] stroke-[2.4]" />
+          <Plus className="h-[22px] w-[22px] stroke-[2.4]" />
           子题
         </button>
-        <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#b7bbc0] text-[22px] font-semibold leading-none text-white">
+        <span className="flex h-[24px] w-[24px] items-center justify-center rounded-full bg-[#b7bbc0] text-[18px] font-semibold leading-none text-white">
           !
         </span>
-        <span className="text-[22px] leading-none text-[#8b8f95]">请核对子题信息</span>
+        <span className="text-[20px] leading-none text-[#8b8f95]">请核对子题信息</span>
         {isMenuOpen && !isFixedSingleChoice ? (
-          <div className="absolute left-0 top-[58px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
+          <div className="absolute left-0 top-[52px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
             {reviewQuestionTypeOptions.map((option) => (
               <button
                 key={option.value}
