@@ -85,11 +85,15 @@ type ReviewQuestion = {
   };
   questionType: ReviewQuestionType;
   questionTypeStatus: QuestionTypeRecognitionStatus;
+  content?: string;
+  optionContents?: Record<string, string>;
   optionCount: number;
   blankCount: number;
   subQuestions: Array<{
     id: string;
     questionType: ReviewQuestionType;
+    content?: string;
+    optionContents?: Record<string, string>;
     optionCount: number;
     blankCount: number;
   }>;
@@ -103,10 +107,15 @@ type ReviewQuestion = {
 type ReviewAiMatchedQuestion = {
   questionBoxId?: string;
   questionType?: string;
+  questionContent?: string;
+  content?: string;
+  optionContents?: Record<string, string>;
   optionCount?: number;
   blankCount?: number;
   subQuestions?: Array<{
     questionType?: string;
+    content?: string;
+    optionContents?: Record<string, string>;
     optionCount?: number;
     blankCount?: number;
   }>;
@@ -154,6 +163,161 @@ function getDefaultOptionCount(questionType: ReviewQuestionType, optionCount?: n
 function getDefaultBlankCount(questionType: ReviewQuestionType, blankCount?: number) {
   if (questionType === 'fill_blank') return blankCount || 1;
   return 1;
+}
+
+const OPTION_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const CIRCLED_NUMBER_MAP = new Map('①②③④⑤⑥⑦⑧⑨⑩⑪⑫'.split('').map((char, index) => [char, index + 1]));
+
+function isChoiceLikeQuestionType(questionType: ReviewQuestionType) {
+  return questionType === 'single_choice' || questionType === 'multiple_choice' || questionType === 'judge';
+}
+
+function isCompoundReviewQuestionType(questionType: ReviewQuestionType) {
+  return questionType === 'material' || questionType === 'reading_comprehension' || questionType === 'cloze';
+}
+
+function inferReviewSubQuestionTypeFromContent(content: string): ReviewQuestionType {
+  if (splitChoiceContent(content)) return 'single_choice';
+  if (/_{2,}|____|\(\s*\)|（\s*）|填空/.test(content)) return 'fill_blank';
+  if (/判断|对错|正确|错误|√|×/.test(content)) return 'judge';
+  return 'short_answer';
+}
+
+function getDefaultOptionContent(questionType: ReviewQuestionType, letter: string) {
+  if (questionType === 'judge') {
+    return letter === 'A' ? '对' : letter === 'B' ? '错' : '';
+  }
+  return '';
+}
+
+function buildOptionContents(
+  questionType: ReviewQuestionType,
+  count: number,
+  current: Record<string, string> = {},
+) {
+  const optionCount = questionType === 'judge' ? 2 : Math.max(1, Math.min(12, count || 4));
+  return OPTION_LETTERS.slice(0, optionCount).split('').reduce<Record<string, string>>((contents, letter) => {
+    contents[letter] = current[letter] ?? getDefaultOptionContent(questionType, letter);
+    return contents;
+  }, {});
+}
+
+function formatRecognizedReviewContent(text: string | undefined) {
+  return (text || '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function splitChoiceContent(content: string | undefined) {
+  const normalized = formatRecognizedReviewContent(content);
+  if (!normalized) return null;
+
+  const optionMarker = /(?:^|[\s\n])([A-H])\s*[.．、:：)）]\s*/g;
+  const matches: Array<{ letter: string; markerStart: number; contentStart: number }> = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = optionMarker.exec(normalized)) !== null) {
+    matches.push({
+      letter: match[1].toUpperCase(),
+      markerStart: match.index + (match[0].length - match[0].trimStart().length),
+      contentStart: match.index + match[0].length,
+    });
+  }
+
+  if (matches.length < 2) return null;
+
+  const expectedLetters = OPTION_LETTERS.slice(0, matches.length).split('');
+  if (!matches.every((item, index) => item.letter === expectedLetters[index])) return null;
+
+  const optionContents: Record<string, string> = {};
+  matches.forEach((item, index) => {
+    const nextStart = matches[index + 1]?.markerStart ?? normalized.length;
+    optionContents[item.letter] = normalized.slice(item.contentStart, nextStart).trim();
+  });
+
+  return {
+    stem: normalized.slice(0, matches[0].markerStart).trim(),
+    optionContents,
+    optionCount: matches.length,
+  };
+}
+
+function splitNumberedSubQuestionSegments(content: string | undefined) {
+  const normalized = formatRecognizedReviewContent(content);
+  if (!normalized) return null;
+
+  const markerPattern = /(?:^|[\n\s])(?:[（(]\s*(\d{1,2})\s*[）)]|([①②③④⑤⑥⑦⑧⑨⑩⑪⑫])|(\d{1,2})\s*[.．、)）])\s*/g;
+  const markers: Array<{ start: number; contentStart: number; number: number }> = [];
+  let markerMatch: RegExpExecArray | null;
+
+  while ((markerMatch = markerPattern.exec(normalized)) !== null) {
+    const number = Number(markerMatch[1] || markerMatch[3] || CIRCLED_NUMBER_MAP.get(markerMatch[2] || '') || 0);
+    if (!Number.isFinite(number) || number <= 0 || number > 30) continue;
+    const start = markerMatch.index + (markerMatch[0].length - markerMatch[0].trimStart().length);
+    markers.push({ start, contentStart: markerMatch.index + markerMatch[0].length, number });
+  }
+
+  const firstSubQuestionIndex = markers.findIndex((marker) => marker.number === 1);
+  const subQuestionMarkers = firstSubQuestionIndex >= 0 ? markers.slice(firstSubQuestionIndex) : markers;
+
+  if (subQuestionMarkers.length < 2) return null;
+  const increasing = subQuestionMarkers.every((marker, index) => (
+    index === 0 || marker.number === subQuestionMarkers[index - 1].number + 1
+  ));
+  if (!increasing) return null;
+
+  return {
+    parentContent: normalized.slice(0, subQuestionMarkers[0].start).trim(),
+    segments: subQuestionMarkers.map((marker, index) => {
+      const nextStart = subQuestionMarkers[index + 1]?.start ?? normalized.length;
+      return normalized.slice(marker.contentStart, nextStart).trim();
+    }),
+  };
+}
+
+function createReviewSubQuestion(
+  parentId: string,
+  index: number,
+  questionType: ReviewQuestionType,
+  source?: {
+    content?: string;
+    optionContents?: Record<string, string>;
+    optionCount?: number | null;
+    blankCount?: number | null;
+  },
+) {
+  const choiceStructure = splitChoiceContent(source?.content);
+  const optionCount = getDefaultOptionCount(questionType, source?.optionCount ?? choiceStructure?.optionCount);
+
+  return {
+    id: `${parentId}-ai-sub-${index + 1}-${Date.now()}`,
+    blankCount: getDefaultBlankCount(questionType, source?.blankCount ?? undefined),
+    content: isChoiceLikeQuestionType(questionType) ? (choiceStructure?.stem || formatRecognizedReviewContent(source?.content)) : formatRecognizedReviewContent(source?.content),
+    optionContents: isChoiceLikeQuestionType(questionType)
+      ? buildOptionContents(questionType, optionCount, source?.optionContents || choiceStructure?.optionContents || {})
+      : undefined,
+    optionCount,
+    questionType,
+  };
+}
+
+function buildSubQuestionsFromContent(parentId: string, parentType: ReviewQuestionType, content: string | undefined, fallbackCount = 1) {
+  const split = splitNumberedSubQuestionSegments(content);
+
+  if (split) {
+    return split.segments.map((segment, index) => {
+      const subType = parentType === 'reading_comprehension' || parentType === 'cloze'
+        ? 'single_choice'
+        : inferReviewSubQuestionTypeFromContent(segment);
+      return createReviewSubQuestion(parentId, index, subType, { content: segment });
+    });
+  }
+
+  if (parentType === 'cloze') {
+    return Array.from({ length: Math.max(1, fallbackCount) }, (_, index) => (
+      createReviewSubQuestion(parentId, index, 'single_choice', { optionCount: 4 })
+    ));
+  }
+
+  return [];
 }
 
 const assignments = [
@@ -1804,6 +1968,8 @@ function createInitialReviewQuestions(boxes: RecognitionBox[], displayMode: Revi
       },
       questionType: 'short_answer',
       questionTypeStatus: 'pending',
+      content: '',
+      optionContents: {},
       optionCount: 4,
       blankCount: 1,
       subQuestions: [],
@@ -1820,32 +1986,44 @@ function applyAiQuestionType(question: ReviewQuestion, matchedQuestion: ReviewAi
   }
 
   const questionType = mapRecognizedQuestionType(matchedQuestion.questionType);
+  const rawContent = formatRecognizedReviewContent(matchedQuestion.questionContent || matchedQuestion.content || question.content);
+  const splitChoice = splitChoiceContent(rawContent);
   const aiSubQuestions = matchedQuestion.subQuestions && matchedQuestion.subQuestions.length > 0
     ? matchedQuestion.subQuestions.map((subQuestion, index) => {
         const subQuestionType = questionType === 'reading_comprehension'
           ? 'single_choice'
           : mapRecognizedQuestionType(subQuestion.questionType);
-        return {
-          id: `${question.id}-ai-sub-${index + 1}-${Date.now()}`,
-          blankCount: getDefaultBlankCount(subQuestionType, subQuestion.blankCount),
-          optionCount: getDefaultOptionCount(subQuestionType, subQuestion.optionCount),
-          questionType: subQuestionType,
-        };
+        return createReviewSubQuestion(question.id, index, subQuestionType, subQuestion);
       })
     : [];
+  const contentSubQuestions = aiSubQuestions.length > 0
+    ? aiSubQuestions
+    : buildSubQuestionsFromContent(question.id, questionType, rawContent, matchedQuestion.blankCount || question.blankCount);
+  const numberedSplit = isCompoundReviewQuestionType(questionType)
+    ? splitNumberedSubQuestionSegments(rawContent)
+    : null;
+  const optionCount = getDefaultOptionCount(questionType, matchedQuestion.optionCount ?? splitChoice?.optionCount);
   const clozeSubQuestionCount = Math.max(
     1,
-    matchedQuestion.blankCount || aiSubQuestions.length || question.blankCount,
+    matchedQuestion.blankCount || contentSubQuestions.length || question.blankCount,
   );
 
   return {
     ...question,
+    content: isChoiceLikeQuestionType(questionType)
+      ? (splitChoice?.stem || rawContent)
+      : (numberedSplit?.parentContent || rawContent),
     blankCount: questionType === 'cloze' ? clozeSubQuestionCount : getDefaultBlankCount(questionType, matchedQuestion.blankCount),
-    optionCount: getDefaultOptionCount(questionType, matchedQuestion.optionCount),
+    optionContents: isChoiceLikeQuestionType(questionType)
+      ? buildOptionContents(questionType, optionCount, matchedQuestion.optionContents || splitChoice?.optionContents || question.optionContents || {})
+      : {},
+    optionCount,
     questionType,
     questionTypeStatus: 'recognized',
     subQuestions: questionType === 'material' || questionType === 'reading_comprehension'
-      ? (aiSubQuestions.length > 0 ? aiSubQuestions : question.subQuestions)
+      ? (contentSubQuestions.length > 0 ? contentSubQuestions : question.subQuestions)
+      : questionType === 'cloze'
+        ? contentSubQuestions
       : [],
   };
 }
@@ -2245,6 +2423,7 @@ function TabletOcrQuestionReviewPage({
   const [questions, setQuestions] = useState<ReviewQuestion[]>(() => createInitialReviewQuestions(initialSelectedBoxes, 'recognition'));
   const [activeQuestionId, setActiveQuestionId] = useState('');
   const [openMenuQuestionId, setOpenMenuQuestionId] = useState<string | null>(null);
+  const [recognitionAddSubMenu, setRecognitionAddSubMenu] = useState<{ questionId: string; afterIndex: number } | null>(null);
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
   const [recognitionStatus, setRecognitionStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
   const [recognitionMessage, setRecognitionMessage] = useState('正在准备识别题型...');
@@ -2597,6 +2776,23 @@ function TabletOcrQuestionReviewPage({
     )));
   };
 
+  const insertRecognitionSubQuestion = (questionId: string, afterIndex: number, questionType: ReviewQuestionType) => {
+    updateQuestion(questionId, (currentQuestion) => {
+      const nextSubQuestions = [...currentQuestion.subQuestions];
+      const insertIndex = Math.min(Math.max(afterIndex + 1, 0), nextSubQuestions.length);
+      nextSubQuestions.splice(insertIndex, 0, createReviewSubQuestion(currentQuestion.id, insertIndex, questionType, {
+        optionCount: getDefaultOptionCount(questionType),
+        blankCount: getDefaultBlankCount(questionType),
+      }));
+      return {
+        ...currentQuestion,
+        blankCount: currentQuestion.questionType === 'cloze' ? nextSubQuestions.length : currentQuestion.blankCount,
+        subQuestions: nextSubQuestions,
+      };
+    });
+    setRecognitionAddSubMenu(null);
+  };
+
   const handleGlobalModeChange = (mode: ReviewDisplayMode) => {
     setGlobalMode(mode);
     setQuestions((currentQuestions) => currentQuestions.map((question) => ({ ...question, viewMode: mode })));
@@ -2849,6 +3045,8 @@ function TabletOcrQuestionReviewPage({
           },
           questionType: 'short_answer' as ReviewQuestionType,
           questionTypeStatus: 'pending' as QuestionTypeRecognitionStatus,
+          content: '',
+          optionContents: {},
           optionCount: 4,
           blankCount: 1,
           subQuestions: [],
@@ -2992,18 +3190,324 @@ function TabletOcrQuestionReviewPage({
     );
   };
 
-  const renderRecognitionContent = (question: ReviewQuestion) => (
-    <div className="rounded-[8px] border border-[#e0e5e9] bg-white p-[18px]">
-      <div className="space-y-[12px]">
-        <div className="h-[15px] w-[86%] rounded-full bg-[#dce4ea]" />
-        <div className="h-[15px] w-[72%] rounded-full bg-[#dce4ea]" />
-        <div className="h-[15px] w-[58%] rounded-full bg-[#dce4ea]" />
-      </div>
-      <div className="mt-[18px] rounded-[7px] bg-[#f7fafb] px-[14px] py-[12px] text-[18px] leading-none text-[#8b949e]">
-        识别文本编辑区域将在下一个模式细化
-      </div>
-    </div>
+  const renderRecognitionTextArea = (
+    value: string,
+    onChange: (value: string) => void,
+    placeholder = '题干',
+  ) => (
+    <textarea
+      className="min-h-[64px] w-full resize-none rounded-[6px] border border-[#d7dde3] bg-white px-[16px] py-[12px] text-[20px] leading-[1.55] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+      onChange={(event) => onChange(event.target.value)}
+      onClick={(event) => event.stopPropagation()}
+      placeholder={placeholder}
+      value={value}
+    />
   );
+
+  const renderRecognitionOptions = (
+    questionType: ReviewQuestionType,
+    optionCount: number,
+    optionContents: Record<string, string> | undefined,
+    onOptionChange: (letter: string, value: string) => void,
+  ) => {
+    const count = questionType === 'judge' ? 2 : optionCount;
+    return (
+      <div className="space-y-[12px]">
+        <div className="flex items-center gap-[6px] text-[18px] leading-none text-[#68727d]">
+          选项
+          <span className="text-[#a1a9b1]">↗</span>
+        </div>
+        {OPTION_LETTERS.slice(0, count).split('').map((letter) => (
+          <label key={letter} className="flex items-center gap-[12px]">
+            <span className="w-[28px] shrink-0 text-right text-[18px] leading-none text-[#2f363d]">{letter}.</span>
+            <input
+              className="h-[42px] flex-1 rounded-[6px] border border-[#d7dde3] bg-white px-[14px] text-[18px] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+              onChange={(event) => onOptionChange(letter, event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              placeholder={`选项 ${letter}`}
+              value={optionContents?.[letter] ?? getDefaultOptionContent(questionType, letter)}
+            />
+          </label>
+        ))}
+      </div>
+    );
+  };
+
+  const renderRecognitionAddSubButton = (question: ReviewQuestion, afterIndex: number) => {
+    const isFixedSingleChoice = subject.includes('英语') && (question.questionType === 'reading_comprehension' || question.questionType === 'cloze');
+    const isMenuOpen = recognitionAddSubMenu?.questionId === question.id && recognitionAddSubMenu.afterIndex === afterIndex;
+
+    return (
+      <div className="relative py-[12px]" onClick={(event) => event.stopPropagation()}>
+        <button
+          className="flex h-[44px] w-full items-center justify-center gap-[8px] rounded-[6px] border border-dashed border-[#23bfb2] bg-white text-[20px] font-medium leading-none text-[#16a69a] active:bg-[#effcfb]"
+          onClick={() => {
+            if (isFixedSingleChoice) {
+              insertRecognitionSubQuestion(question.id, afterIndex, 'single_choice');
+              return;
+            }
+            setRecognitionAddSubMenu(isMenuOpen ? null : { questionId: question.id, afterIndex });
+          }}
+          type="button"
+        >
+          <Plus className="h-[22px] w-[22px]" />
+          添加子题
+        </button>
+        {isMenuOpen && !isFixedSingleChoice ? (
+          <div className="absolute left-1/2 top-[60px] z-30 w-[188px] -translate-x-1/2 overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
+            {reviewQuestionTypeOptions.map((option) => (
+              <button
+                key={option.value}
+                className="h-[46px] w-full px-[18px] text-left text-[20px] leading-none text-[#4d5258] active:bg-[#f3f5f6]"
+                onClick={() => insertRecognitionSubQuestion(question.id, afterIndex, option.value)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderRecognitionSubQuestion = (question: ReviewQuestion, subQuestion: ReviewQuestion['subQuestions'][number], index: number) => {
+    const isFixedSingleChoice = subject.includes('英语') && (question.questionType === 'reading_comprehension' || question.questionType === 'cloze');
+
+    return (
+      <div className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
+        <div className="mb-[14px] flex items-center justify-between">
+          <div className="flex items-center gap-[14px]">
+            <span className="text-[22px] font-semibold leading-none text-[#202124]">（{index + 1}）</span>
+            {isFixedSingleChoice ? (
+              <span className="inline-flex h-[34px] items-center rounded-[6px] border border-[#d7dde3] bg-[#eceff1] px-[14px] text-[18px] leading-none text-[#7b858f]">
+                单选
+              </span>
+            ) : (
+              <QuestionTypeSelect
+                onChange={(value) => {
+                  updateQuestion(question.id, (currentQuestion) => ({
+                    ...currentQuestion,
+                    subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                      currentSubQuestion.id === subQuestion.id
+                        ? {
+                            ...currentSubQuestion,
+                            blankCount: value === 'fill_blank' ? Math.max(1, currentSubQuestion.blankCount) : currentSubQuestion.blankCount,
+                            optionContents: isChoiceLikeQuestionType(value)
+                              ? buildOptionContents(value, getDefaultOptionCount(value, currentSubQuestion.optionCount), currentSubQuestion.optionContents || {})
+                              : {},
+                            optionCount: getDefaultOptionCount(value, currentSubQuestion.optionCount),
+                            questionType: value,
+                          }
+                        : currentSubQuestion
+                    )),
+                  }));
+                }}
+                value={subQuestion.questionType}
+              />
+            )}
+          </div>
+          <button
+            aria-label="删除子题"
+            className="flex h-[38px] w-[38px] items-center justify-center rounded-full text-[#7b8085] active:bg-[#eceff1] active:text-[#d84a4a]"
+            onClick={(event) => {
+              event.stopPropagation();
+              updateQuestion(question.id, (currentQuestion) => ({
+                ...currentQuestion,
+                blankCount: currentQuestion.questionType === 'cloze'
+                  ? Math.max(1, currentQuestion.subQuestions.length - 1)
+                  : currentQuestion.blankCount,
+                subQuestions: currentQuestion.subQuestions.filter((currentSubQuestion) => currentSubQuestion.id !== subQuestion.id),
+              }));
+            }}
+            type="button"
+          >
+            <Trash2 className="h-[20px] w-[20px]" />
+          </button>
+        </div>
+
+        {question.questionType !== 'cloze' ? (
+          <div className="mb-[16px]">
+            <div className="mb-[8px] text-[18px] leading-none text-[#68727d]">子题题干</div>
+            {renderRecognitionTextArea(subQuestion.content || '', (value) => {
+              updateQuestion(question.id, (currentQuestion) => ({
+                ...currentQuestion,
+                subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                  currentSubQuestion.id === subQuestion.id ? { ...currentSubQuestion, content: value } : currentSubQuestion
+                )),
+              }));
+            }, '子题题干')}
+          </div>
+        ) : null}
+
+        {isChoiceLikeQuestionType(subQuestion.questionType) ? (
+          <div>
+            {subQuestion.questionType !== 'judge' ? (
+              <div className="mb-[12px]" onClick={(event) => event.stopPropagation()}>
+                <CountStepper
+                  label="选项数"
+                  onChange={(value) => {
+                    updateQuestion(question.id, (currentQuestion) => ({
+                      ...currentQuestion,
+                      subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                        currentSubQuestion.id === subQuestion.id
+                          ? {
+                              ...currentSubQuestion,
+                              optionContents: buildOptionContents(currentSubQuestion.questionType, value, currentSubQuestion.optionContents || {}),
+                              optionCount: value,
+                            }
+                          : currentSubQuestion
+                      )),
+                    }));
+                  }}
+                  value={subQuestion.optionCount}
+                />
+              </div>
+            ) : null}
+            {renderRecognitionOptions(
+              subQuestion.questionType,
+              subQuestion.optionCount,
+              subQuestion.optionContents,
+              (letter, value) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                    currentSubQuestion.id === subQuestion.id
+                      ? { ...currentSubQuestion, optionContents: { ...(currentSubQuestion.optionContents || {}), [letter]: value } }
+                      : currentSubQuestion
+                  )),
+                }));
+              },
+            )}
+          </div>
+        ) : null}
+
+        {subQuestion.questionType === 'fill_blank' ? (
+          <div onClick={(event) => event.stopPropagation()}>
+            <CountStepper
+              label="空数"
+              onChange={(value) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                    currentSubQuestion.id === subQuestion.id ? { ...currentSubQuestion, blankCount: value } : currentSubQuestion
+                  )),
+                }));
+              }}
+              value={subQuestion.blankCount}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderRecognitionContent = (question: ReviewQuestion) => {
+    const isEnglishSubject = subject.includes('英语');
+    const isCloze = isEnglishSubject && question.questionType === 'cloze';
+    const isCompound = question.questionType === 'material' || (isEnglishSubject && question.questionType === 'reading_comprehension') || isCloze;
+
+    return (
+      <div className="space-y-[18px] rounded-[8px] border border-[#e0e5e9] bg-white p-[18px]">
+        <div>
+          <div className="mb-[8px] text-[18px] leading-none text-[#68727d]">题干</div>
+          {renderRecognitionTextArea(question.content || '', (value) => {
+            updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, content: value }));
+          })}
+        </div>
+
+        {isChoiceLikeQuestionType(question.questionType) ? (
+          <div>
+            {question.questionType !== 'judge' ? (
+              <div className="mb-[12px]" onClick={(event) => event.stopPropagation()}>
+                <CountStepper
+                  label="选项数"
+                  onChange={(value) => {
+                    updateQuestion(question.id, (currentQuestion) => ({
+                      ...currentQuestion,
+                      optionContents: buildOptionContents(currentQuestion.questionType, value, currentQuestion.optionContents || {}),
+                      optionCount: value,
+                    }));
+                  }}
+                  value={question.optionCount}
+                />
+              </div>
+            ) : null}
+            {renderRecognitionOptions(
+              question.questionType,
+              question.optionCount,
+              question.optionContents,
+              (letter, value) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  optionContents: { ...(currentQuestion.optionContents || {}), [letter]: value },
+                }));
+              },
+            )}
+          </div>
+        ) : null}
+
+        {question.questionType === 'fill_blank' ? (
+          <div onClick={(event) => event.stopPropagation()}>
+            <CountStepper label="空数" onChange={(value) => updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, blankCount: value }))} value={question.blankCount} />
+          </div>
+        ) : null}
+
+        {isCloze ? (
+          <div className="flex items-center gap-[18px] rounded-[7px] bg-[#f3f4f5] px-[16px] py-[10px]" onClick={(event) => event.stopPropagation()}>
+            <CountStepper
+              label="子题数"
+              onChange={(value) => {
+                updateQuestion(question.id, (currentQuestion) => {
+                  const nextSubQuestions = [...currentQuestion.subQuestions];
+                  if (value > nextSubQuestions.length) {
+                    for (let index = nextSubQuestions.length; index < value; index += 1) {
+                      nextSubQuestions.push(createReviewSubQuestion(currentQuestion.id, index, 'single_choice', { optionCount: currentQuestion.optionCount }));
+                    }
+                  } else {
+                    nextSubQuestions.splice(value);
+                  }
+                  return { ...currentQuestion, blankCount: value, subQuestions: nextSubQuestions };
+                });
+              }}
+              value={question.blankCount}
+            />
+            <div className="h-[28px] w-px bg-[#c9ced3]" />
+            <span className="text-[18px] leading-none text-[#68727d]">题型：</span>
+            <span className="inline-flex h-[40px] min-w-[86px] items-center justify-center rounded-[7px] border border-[#d7dde3] bg-[#eceff1] px-[14px] text-[20px] leading-none text-[#7b858f]">单选</span>
+            <div className="h-[28px] w-px bg-[#c9ced3]" />
+            <CountStepper
+              label="选项数"
+              onChange={(value) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  optionCount: value,
+                  subQuestions: currentQuestion.subQuestions.map((subQuestion) => ({
+                    ...subQuestion,
+                    optionContents: buildOptionContents('single_choice', value, subQuestion.optionContents || {}),
+                    optionCount: value,
+                  })),
+                }));
+              }}
+              value={question.optionCount}
+            />
+          </div>
+        ) : null}
+
+        {isCompound ? (
+          <div className="space-y-[4px]">
+            {question.subQuestions.length === 0 ? renderRecognitionAddSubButton(question, -1) : null}
+            {question.subQuestions.map((subQuestion, index) => (
+              <div key={subQuestion.id}>
+                {renderRecognitionSubQuestion(question, subQuestion, index)}
+                {renderRecognitionAddSubButton(question, index)}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   const renderReviewRecognizingContent = (message: string) => (
     <div className="flex h-[204px] w-full flex-col items-center justify-center rounded-[8px] border border-[#dfe4e8] bg-[#f8fafb]">
@@ -3059,21 +3563,26 @@ function TabletOcrQuestionReviewPage({
               updateQuestion(question.id, (currentQuestion) => ({
                 ...currentQuestion,
                 blankCount: value === 'cloze' ? Math.max(1, currentQuestion.blankCount) : currentQuestion.blankCount,
+                content: currentQuestion.content || '',
+                optionContents: isChoiceLikeQuestionType(value)
+                  ? buildOptionContents(value, getDefaultOptionCount(value, currentQuestion.optionCount), currentQuestion.optionContents || {})
+                  : {},
                 optionCount: value === 'cloze' || value === 'reading_comprehension' ? Math.max(4, currentQuestion.optionCount) : currentQuestion.optionCount,
                 questionType: value,
                 questionTypeStatus: 'manual',
                 subQuestions: value === 'material' && currentQuestion.subQuestions.length === 0
-                  ? [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'short_answer', optionCount: 4, blankCount: 1 }]
+                  ? [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'short_answer', content: '', optionContents: {}, optionCount: 4, blankCount: 1 }]
                   : value === 'reading_comprehension'
                     ? (currentQuestion.subQuestions.length > 0
                         ? currentQuestion.subQuestions.map((subQuestion) => ({
                             ...subQuestion,
+                            optionContents: buildOptionContents('single_choice', Math.max(4, subQuestion.optionCount), subQuestion.optionContents || {}),
                             optionCount: Math.max(4, subQuestion.optionCount),
                             questionType: 'single_choice' as ReviewQuestionType,
                           }))
-                        : [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'single_choice', optionCount: 4, blankCount: 1 }])
+                        : [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'single_choice', content: '', optionContents: buildOptionContents('single_choice', 4), optionCount: 4, blankCount: 1 }])
                     : value === 'cloze'
-                      ? []
+                      ? buildSubQuestionsFromContent(currentQuestion.id, 'cloze', currentQuestion.content, currentQuestion.blankCount)
                       : currentQuestion.subQuestions,
               }));
             }}
@@ -3182,6 +3691,7 @@ function TabletOcrQuestionReviewPage({
             </div>
           ) : null}
 
+          {question.viewMode === 'image' ? (
           <div className="mt-[18px]">
             <AnswerConfigPanel
               onAddSubQuestion={(questionType) => {
@@ -3192,6 +3702,8 @@ function TabletOcrQuestionReviewPage({
                     {
                       id: `${currentQuestion.id}-sub-${Date.now()}`,
                       blankCount: getDefaultBlankCount(questionType),
+                      content: '',
+                      optionContents: isChoiceLikeQuestionType(questionType) ? buildOptionContents(questionType, getDefaultOptionCount(questionType)) : {},
                       optionCount: getDefaultOptionCount(questionType),
                       questionType,
                     },
@@ -3237,6 +3749,7 @@ function TabletOcrQuestionReviewPage({
                       ? {
                           ...subQuestion,
                           blankCount: value === 'fill_blank' ? Math.max(1, subQuestion.blankCount) : subQuestion.blankCount,
+                          optionContents: isChoiceLikeQuestionType(value) ? buildOptionContents(value, getDefaultOptionCount(value, subQuestion.optionCount), subQuestion.optionContents || {}) : {},
                           optionCount: value === 'multiple_choice' ? Math.max(4, subQuestion.optionCount) : subQuestion.optionCount,
                           questionType: value,
                         }
@@ -3248,6 +3761,7 @@ function TabletOcrQuestionReviewPage({
               subject={subject}
             />
           </div>
+          ) : null}
         </div>
       </section>
     );
