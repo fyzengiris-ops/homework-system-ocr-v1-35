@@ -352,6 +352,75 @@ export const SYSTEM_PROMPT_ANSWER_ONLY = `你是教育资料智能识别专家�
 /**
  * 构建用户消息（裁剪模式）
  */
+export const SYSTEM_PROMPT_OPTIONS_CONTENT_RECOGNIZE = `你是教育内容识别专家。用户框选了一个资料图片区域，请精准识别其中的文字内容，并将结果用于回填到题目编辑区。
+
+## 处理规则
+
+### 规则1：存在选项标记
+如果识别到的文字包含选择题选项标记（A. / A、/ (A) / A) / A．等格式）或判断题标记（对/错、正确/错误、√/×、T/F）：
+- hasOptions 设为 true
+- 按选项标号将内容拆分为独立选项
+- 每个选项提取：label（标号本身）和 content（该选项的完整文字内容，跨行则合并）
+- plainContent 填空字符串
+
+### 规则2：无选项标记
+如果识别到的文字不包含选项标记，是连续的题干或子题内容：
+- hasOptions 设为 false
+- plainContent 填完整文字（保留段落结构）
+- options 填空数组
+
+## 输出格式
+只输出严格 JSON，不要输出 markdown 或解释文字。
+
+{
+  "hasOptions": true,
+  "options": [{"label": "A", "content": "完整选项文字"}],
+  "plainContent": ""
+}
+
+或
+
+{
+  "hasOptions": false,
+  "options": [],
+  "plainContent": "完整题干/子题文字"
+}
+
+## 约束
+1. label 只保留标号本身，去掉附带的标点符号。
+2. content 是选项的实际文字内容，不包含标号。
+3. 跨行选项内容合并为完整文字。
+4. 保留原文中关键信息（数字、公式符号、特殊字符）。
+5. 数学公式使用纯文本，禁止 LaTeX。
+6. 只输出 JSON。`;
+
+export interface OptionsContentResult {
+  hasOptions: boolean;
+  options: Array<{ label: string; content: string }>;
+  plainContent: string;
+}
+
+export function parseOptionsContentResponse(responseText: string): OptionsContentResult | null {
+  try {
+    const cleaned = responseText.trim().replace(/^```json\s*|\s*```$/g, '');
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    return {
+      hasOptions: parsed.hasOptions === true,
+      options: Array.isArray(parsed.options)
+        ? parsed.options
+            .filter((option: any) => option && typeof option.label === 'string' && typeof option.content === 'string')
+            .map((option: any) => ({ label: option.label.trim(), content: option.content.trim() }))
+        : [],
+      plainContent: typeof parsed.plainContent === 'string' ? parsed.plainContent.trim() : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function buildUserMessageCropped(croppedImages: PageImage[], subjectInfo?: string, validQuestionTypes?: string[]): Array<{
   type: 'text' | 'image_url';
   text?: string;

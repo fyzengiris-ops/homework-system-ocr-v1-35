@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -16,6 +16,7 @@ import {
   Image as ImageIcon,
   Images,
   Layers as LayersIcon,
+  Link2,
   MessageCircle,
   Mic2,
   Minus,
@@ -52,6 +53,12 @@ type ReviewDisplayMode = 'recognition' | 'image';
 type ReviewQuestionType = 'single_choice' | 'multiple_choice' | 'fill_blank' | 'short_answer' | 'material' | 'judge' | 'reading_comprehension' | 'cloze';
 type QuestionTypeRecognitionStatus = 'pending' | 'recognized' | 'failed' | 'manual' | 'stale';
 type CropDragAction = 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se' | 'resize-n' | 'resize-s' | 'resize-w' | 'resize-e';
+type TabletManualLinkField = 'content' | 'optionContent';
+type TabletManualLinkTarget = {
+  questionId: string;
+  field: TabletManualLinkField;
+  subQuestionId?: string;
+};
 
 type MaterialPage = SelectedImage & {
   pageNumber: number;
@@ -73,6 +80,11 @@ type RecognitionBox = {
 
 type TabletConfirmAction = 'replace' | 'clear' | null;
 type CropRegion = { x: number; y: number; width: number; height: number };
+type OptionsContentRecognitionResult = {
+  hasOptions: boolean;
+  options: Array<{ label: string; content: string }>;
+  plainContent: string;
+};
 
 type ReviewQuestion = {
   id: string;
@@ -2145,6 +2157,41 @@ function CountStepper({
   );
 }
 
+function AutoResizeTextarea({
+  className,
+  onChange,
+  onClick,
+  placeholder,
+  value,
+}: {
+  className: string;
+  onChange: (value: string) => void;
+  onClick?: (event: ReactMouseEvent<HTMLTextAreaElement>) => void;
+  placeholder?: string;
+  value: string;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      className={className}
+      onChange={(event) => onChange(event.target.value)}
+      onClick={onClick}
+      placeholder={placeholder}
+      ref={textareaRef}
+      rows={1}
+      value={value}
+    />
+  );
+}
+
 function CroppedQuestionImage({
   cropRegion,
   imageData,
@@ -2424,6 +2471,9 @@ function TabletOcrQuestionReviewPage({
   const [activeQuestionId, setActiveQuestionId] = useState('');
   const [openMenuQuestionId, setOpenMenuQuestionId] = useState<string | null>(null);
   const [recognitionAddSubMenu, setRecognitionAddSubMenu] = useState<{ questionId: string; afterIndex: number } | null>(null);
+  const [manualLinkTarget, setManualLinkTarget] = useState<TabletManualLinkTarget | null>(null);
+  const [manualLinkProcessingTarget, setManualLinkProcessingTarget] = useState<TabletManualLinkTarget | null>(null);
+  const [precisionRecognitionBox, setPrecisionRecognitionBox] = useState<RecognitionBox | null>(null);
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
   const [recognitionStatus, setRecognitionStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
   const [recognitionMessage, setRecognitionMessage] = useState('正在准备识别题型...');
@@ -2722,12 +2772,29 @@ function TabletOcrQuestionReviewPage({
           height: clampPercent(reviewBoxDrag.startBox.height + dy, 3, 100 - reviewBoxDrag.startBox.y),
         };
       }));
+      setPrecisionRecognitionBox((currentBox) => {
+        if (!currentBox || currentBox.id !== reviewBoxDrag.id) return currentBox;
+
+        if (reviewBoxDrag.action === 'move') {
+          return {
+            ...currentBox,
+            x: clampPercent(reviewBoxDrag.startBox.x + dx, 0, 100 - reviewBoxDrag.startBox.width),
+            y: clampPercent(reviewBoxDrag.startBox.y + dy, 0, 100 - reviewBoxDrag.startBox.height),
+          };
+        }
+
+        return {
+          ...currentBox,
+          width: clampPercent(reviewBoxDrag.startBox.width + dx, 5, 100 - reviewBoxDrag.startBox.x),
+          height: clampPercent(reviewBoxDrag.startBox.height + dy, 3, 100 - reviewBoxDrag.startBox.y),
+        };
+      });
     };
 
     const handlePointerUp = () => {
       const changedBoxId = reviewBoxDrag.id;
       setReviewBoxDrag(null);
-      if (hasMovedReviewBoxRef.current) {
+      if (hasMovedReviewBoxRef.current && changedBoxId !== precisionRecognitionBox?.id) {
         setReviewBoxes((currentBoxes) => currentBoxes.map((box) => (
           box.id === changedBoxId ? { ...box, selected: true } : box
         )));
@@ -2752,7 +2819,7 @@ function TabletOcrQuestionReviewPage({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [reviewBoxDrag]);
+  }, [precisionRecognitionBox?.id, reviewBoxDrag]);
 
   const scrollLeftToQuestion = (questionId: string) => {
     window.setTimeout(() => {
@@ -2774,6 +2841,148 @@ function TabletOcrQuestionReviewPage({
     setQuestions((currentQuestions) => currentQuestions.map((question) => (
       question.id === questionId ? updater(question) : question
     )));
+  };
+
+  const isManualLinkTargetActive = (target: TabletManualLinkTarget) => (
+    manualLinkTarget?.questionId === target.questionId &&
+    manualLinkTarget.field === target.field &&
+    manualLinkTarget.subQuestionId === target.subQuestionId
+  );
+
+  const isManualLinkTargetProcessing = (target: TabletManualLinkTarget) => (
+    manualLinkProcessingTarget?.questionId === target.questionId &&
+    manualLinkProcessingTarget.field === target.field &&
+    manualLinkProcessingTarget.subQuestionId === target.subQuestionId
+  );
+
+  const toggleManualLinkTarget = (target: TabletManualLinkTarget) => {
+    if (isManualLinkTargetActive(target)) {
+      setManualLinkTarget(null);
+      setPrecisionRecognitionBox(null);
+      return;
+    }
+    setManualLinkTarget(target);
+    setPrecisionRecognitionBox(null);
+    setIsReviewAddBoxMode(false);
+    setActiveQuestionId(target.questionId);
+    scrollLeftToQuestion(target.questionId);
+  };
+
+  const applyPrecisionRecognitionResult = (target: TabletManualLinkTarget, result: OptionsContentRecognitionResult) => {
+    updateQuestion(target.questionId, (currentQuestion) => {
+      if (target.subQuestionId) {
+        return {
+          ...currentQuestion,
+          subQuestions: currentQuestion.subQuestions.map((subQuestion) => {
+            if (subQuestion.id !== target.subQuestionId) return subQuestion;
+            if (result.hasOptions && result.options.length > 0) {
+              const optionContents = result.options.reduce<Record<string, string>>((contents, option) => {
+                const label = option.label.trim().toUpperCase().slice(0, 1);
+                if (label) contents[label] = option.content;
+                return contents;
+              }, { ...(subQuestion.optionContents || {}) });
+              return {
+                ...subQuestion,
+                optionContents: buildOptionContents(subQuestion.questionType, Math.max(subQuestion.optionCount, result.options.length), optionContents),
+                optionCount: Math.max(subQuestion.optionCount, result.options.length),
+              };
+            }
+            return result.plainContent ? { ...subQuestion, content: result.plainContent } : subQuestion;
+          }),
+        };
+      }
+
+      if (result.hasOptions && result.options.length > 0) {
+        const optionContents = result.options.reduce<Record<string, string>>((contents, option) => {
+          const label = option.label.trim().toUpperCase().slice(0, 1);
+          if (label) contents[label] = option.content;
+          return contents;
+        }, { ...(currentQuestion.optionContents || {}) });
+        return {
+          ...currentQuestion,
+          optionContents: buildOptionContents(currentQuestion.questionType, Math.max(currentQuestion.optionCount, result.options.length), optionContents),
+          optionCount: Math.max(currentQuestion.optionCount, result.options.length),
+        };
+      }
+
+      return result.plainContent ? { ...currentQuestion, content: result.plainContent } : currentQuestion;
+    });
+  };
+
+  const requestPrecisionRecognition = async (box: RecognitionBox) => {
+    const page = materialPages.find((currentPage) => currentPage.pageNumber === box.pageNumber);
+    if (!page) throw new Error('未找到资料页');
+    const cropped = await cropMaterialQuestionImage(page, box);
+
+    const response = await fetch('/api/recognize-questions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contentOnly: true,
+        pages: [{
+          pageNumber: 1,
+          imageData: cropped.imageData,
+          width: cropped.width,
+          height: cropped.height,
+        }],
+      }),
+    });
+
+    if (!response.ok || !response.body) {
+      throw new Error('精准识别请求失败');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const eventText of events) {
+        const dataLine = eventText.split('\n').find((line) => line.startsWith('data:'));
+        if (!dataLine) continue;
+
+        const event = JSON.parse(dataLine.replace(/^data:\s*/, '')) as {
+          type?: string;
+          data?: {
+            error?: string;
+            result?: OptionsContentRecognitionResult;
+          };
+        };
+
+        if (event.type === 'error') {
+          throw new Error(event.data?.error || '精准识别失败');
+        }
+
+        if (event.type === 'complete' && event.data?.result) {
+          return event.data.result;
+        }
+      }
+
+      if (done) break;
+    }
+
+    throw new Error('精准识别无结果');
+  };
+
+  const handlePrecisionRecognition = async () => {
+    if (!manualLinkTarget || !precisionRecognitionBox || manualLinkProcessingTarget) return;
+
+    setManualLinkProcessingTarget(manualLinkTarget);
+    try {
+      const result = await requestPrecisionRecognition(precisionRecognitionBox);
+      applyPrecisionRecognitionResult(manualLinkTarget, result);
+      setPrecisionRecognitionBox(null);
+      setManualLinkTarget(null);
+    } catch (error) {
+      console.error('[TabletOCR] precision recognition failed:', error);
+    } finally {
+      setManualLinkProcessingTarget(null);
+    }
   };
 
   const insertRecognitionSubQuestion = (questionId: string, afterIndex: number, questionType: ReviewQuestionType) => {
@@ -2974,6 +3183,27 @@ function TabletOcrQuestionReviewPage({
     });
   };
 
+  const addPrecisionRecognitionBoxAtPoint = (page: MaterialPage, clientX: number, clientY: number) => {
+    const containerRect = reviewPageWrapRefs.current[page.pageNumber]?.getBoundingClientRect();
+    if (!containerRect) return;
+
+    const width = 64;
+    const height = 10;
+    const clickX = ((clientX - containerRect.left) / containerRect.width) * 100;
+    const clickY = ((clientY - containerRect.top) / containerRect.height) * 100;
+
+    setPrecisionRecognitionBox({
+      id: `precision-recognition-${Date.now()}`,
+      pageNumber: page.pageNumber,
+      x: clampPercent(clickX - width / 2, 0, 100 - width),
+      y: clampPercent(clickY - height / 2, 0, 100 - height),
+      width,
+      height,
+      selected: true,
+      source: 'manual',
+    });
+  };
+
   const mergeRecognizedReviewQuestions = (
     currentQuestions: ReviewQuestion[],
     incomingQuestions: ReviewQuestion[],
@@ -3089,6 +3319,10 @@ function TabletOcrQuestionReviewPage({
   const renderLeftMaterialPage = (page: MaterialPage) => {
     const frame = getMaterialPageFrameSize(page);
     const pageBoxes = reviewBoxes.filter((box) => box.pageNumber === page.pageNumber);
+    const visiblePageBoxes = manualLinkTarget ? [] : pageBoxes;
+    const pagePrecisionBox = manualLinkTarget && precisionRecognitionBox?.pageNumber === page.pageNumber
+      ? precisionRecognitionBox
+      : null;
 
     return (
       <div
@@ -3096,8 +3330,13 @@ function TabletOcrQuestionReviewPage({
         className="mx-auto mb-[28px] w-fit rounded-[12px] border border-[#dfe6eb] bg-white p-[12px] shadow-[0_8px_22px_rgba(31,44,58,0.09)]"
       >
         <div
-          className={`relative bg-white ${isReviewAddBoxMode ? 'cursor-crosshair' : ''}`}
+          className={`relative bg-white ${isReviewAddBoxMode || manualLinkTarget ? 'cursor-crosshair' : ''}`}
           onClick={(event) => {
+            if (manualLinkTarget && page.role !== 'answer') {
+              event.stopPropagation();
+              addPrecisionRecognitionBoxAtPoint(page, event.clientX, event.clientY);
+              return;
+            }
             if (isReviewAddBoxMode && page.role !== 'answer') {
               event.stopPropagation();
               addReviewBoxAtPoint(page, event.clientX, event.clientY);
@@ -3109,7 +3348,7 @@ function TabletOcrQuestionReviewPage({
           style={{ width: frame.width, height: frame.height }}
         >
           <img alt="" className="h-full w-full object-fill" src={page.url} />
-          {pageBoxes.map((box) => {
+          {visiblePageBoxes.map((box) => {
             const isPending = pendingReviewBoxIds.has(box.id);
             const isQueued = isPending && box.selected;
             const hasLinkedQuestion = questions.some((question) => question.id === box.id);
@@ -3185,7 +3424,123 @@ function TabletOcrQuestionReviewPage({
               </div>
             );
           })}
+          {pagePrecisionBox ? (
+            <div
+              className="absolute border-2 border-[#2f80ed] bg-[#eaf3ff]/24 shadow-[0_0_0_3px_rgba(47,128,237,0.16)]"
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => startReviewBoxDrag(event, pagePrecisionBox, 'move')}
+              style={{
+                height: `${pagePrecisionBox.height}%`,
+                left: `${pagePrecisionBox.x}%`,
+                top: `${pagePrecisionBox.y}%`,
+                width: `${pagePrecisionBox.width}%`,
+              }}
+            >
+              <span className="absolute left-[4px] top-[4px] rounded-[4px] bg-[#2f80ed] px-[7px] py-[4px] text-[13px] font-medium leading-none text-white shadow-[0_1px_5px_rgba(31,44,58,0.14)]">
+                精准识别
+              </span>
+              <button
+                aria-label="取消精准识别框"
+                className="absolute right-[4px] top-[4px] flex h-[22px] w-[22px] items-center justify-center rounded-full bg-[#202124]/50 text-white shadow-[0_1px_5px_rgba(31,44,58,0.16)] active:bg-[#000]"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPrecisionRecognitionBox(null);
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                type="button"
+              >
+                <X className="h-[13px] w-[13px]" />
+              </button>
+              <button
+                aria-label="调整精准识别框大小"
+                className="absolute bottom-[-8px] right-[-8px] h-[18px] w-[18px] rounded-full border-[2px] border-white bg-[#2f80ed] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
+                onPointerDown={(event) => startReviewBoxDrag(event, pagePrecisionBox, 'resize')}
+                type="button"
+              />
+            </div>
+          ) : null}
         </div>
+      </div>
+    );
+  };
+
+  const renderManualLinkButton = (target: TabletManualLinkTarget, label: string) => {
+    const isActive = isManualLinkTargetActive(target);
+    const isProcessing = isManualLinkTargetProcessing(target);
+
+    return (
+      <button
+        aria-label={label}
+        className={`flex h-[28px] w-[28px] items-center justify-center rounded-[5px] transition-colors ${
+          isActive
+            ? 'bg-[#fff3e0] text-[#f28b21]'
+            : 'text-[#b4bdc6] active:bg-[#fff3e0] active:text-[#f28b21]'
+        } ${isProcessing ? 'cursor-not-allowed opacity-50' : ''}`}
+        disabled={isProcessing}
+        onClick={(event) => {
+          event.stopPropagation();
+          toggleManualLinkTarget(target);
+        }}
+        type="button"
+      >
+        <Link2 className="h-[17px] w-[17px]" />
+      </button>
+    );
+  };
+
+  const renderFieldLoading = (label: string) => (
+    <div className="flex min-h-[54px] items-center gap-[10px] rounded-[6px] border border-[#b7ded9] bg-[#effcfb] px-[14px] text-[18px] font-medium leading-none text-[#16a69a]">
+      <div className="h-[22px] w-[22px] animate-spin rounded-full border-[3px] border-[#cfe5e2] border-t-[#23bfb2]" />
+      {label}
+    </div>
+  );
+
+  const renderRecognitionTextAreaV2 = (
+    value: string,
+    onChange: (value: string) => void,
+    placeholder = '题干',
+    isProcessing = false,
+    loadingLabel = '题干识别中...',
+  ) => (
+    isProcessing ? renderFieldLoading(loadingLabel) : (
+      <AutoResizeTextarea
+        className="min-h-[64px] w-full resize-none overflow-hidden rounded-[6px] border border-[#d7dde3] bg-white px-[16px] py-[12px] text-[20px] leading-[1.55] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+        onChange={onChange}
+        onClick={(event) => event.stopPropagation()}
+        placeholder={placeholder}
+        value={value}
+      />
+    )
+  );
+
+  const renderRecognitionOptionsV2 = (
+    questionType: ReviewQuestionType,
+    optionCount: number,
+    optionContents: Record<string, string> | undefined,
+    onOptionChange: (letter: string, value: string) => void,
+    target: TabletManualLinkTarget,
+  ) => {
+    const count = questionType === 'judge' ? 2 : optionCount;
+    if (isManualLinkTargetProcessing(target)) return renderFieldLoading('选项识别中...');
+
+    return (
+      <div className="space-y-[12px]">
+        <div className="flex items-center gap-[6px] text-[18px] leading-none text-[#68727d]">
+          <span>选项</span>
+          {renderManualLinkButton(target, '关联选项区域')}
+        </div>
+        {OPTION_LETTERS.slice(0, count).split('').map((letter) => (
+          <label key={letter} className="flex items-center gap-[12px]">
+            <span className="w-[28px] shrink-0 text-right text-[18px] leading-none text-[#2f363d]">{letter}.</span>
+            <input
+              className="h-[42px] flex-1 rounded-[6px] border border-[#d7dde3] bg-white px-[14px] text-[18px] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+              onChange={(event) => onOptionChange(letter, event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              placeholder={`选项 ${letter}`}
+              value={optionContents?.[letter] ?? getDefaultOptionContent(questionType, letter)}
+            />
+          </label>
+        ))}
       </div>
     );
   };
@@ -3329,7 +3684,13 @@ function TabletOcrQuestionReviewPage({
         {question.questionType !== 'cloze' ? (
           <div className="mb-[16px]">
             <div className="mb-[8px] text-[18px] leading-none text-[#68727d]">子题题干</div>
-            {renderRecognitionTextArea(subQuestion.content || '', (value) => {
+            <div className="mb-[8px] flex justify-end">
+              {renderManualLinkButton({ questionId: question.id, field: 'content', subQuestionId: subQuestion.id }, '关联子题题干')}
+            </div>
+            {isManualLinkTargetProcessing({ questionId: question.id, field: 'content', subQuestionId: subQuestion.id }) ? (
+              <div className="mb-[8px]">{renderFieldLoading('子题题干识别中...')}</div>
+            ) : null}
+            {renderRecognitionTextAreaV2(subQuestion.content || '', (value) => {
               updateQuestion(question.id, (currentQuestion) => ({
                 ...currentQuestion,
                 subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
@@ -3364,7 +3725,7 @@ function TabletOcrQuestionReviewPage({
                 />
               </div>
             ) : null}
-            {renderRecognitionOptions(
+            {renderRecognitionOptionsV2(
               subQuestion.questionType,
               subQuestion.optionCount,
               subQuestion.optionContents,
@@ -3378,6 +3739,7 @@ function TabletOcrQuestionReviewPage({
                   )),
                 }));
               },
+              { questionId: question.id, field: 'optionContent', subQuestionId: subQuestion.id },
             )}
           </div>
         ) : null}
@@ -3411,7 +3773,13 @@ function TabletOcrQuestionReviewPage({
       <div className="space-y-[18px] rounded-[8px] border border-[#e0e5e9] bg-white p-[18px]">
         <div>
           <div className="mb-[8px] text-[18px] leading-none text-[#68727d]">题干</div>
-          {renderRecognitionTextArea(question.content || '', (value) => {
+          <div className="mb-[8px] flex justify-end">
+            {renderManualLinkButton({ questionId: question.id, field: 'content' }, '关联父题题干')}
+          </div>
+          {isManualLinkTargetProcessing({ questionId: question.id, field: 'content' }) ? (
+            <div className="mb-[8px]">{renderFieldLoading('题干识别中...')}</div>
+          ) : null}
+          {renderRecognitionTextAreaV2(question.content || '', (value) => {
             updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, content: value }));
           })}
         </div>
@@ -3433,7 +3801,7 @@ function TabletOcrQuestionReviewPage({
                 />
               </div>
             ) : null}
-            {renderRecognitionOptions(
+            {renderRecognitionOptionsV2(
               question.questionType,
               question.optionCount,
               question.optionContents,
@@ -3443,6 +3811,7 @@ function TabletOcrQuestionReviewPage({
                   optionContents: { ...(currentQuestion.optionContents || {}), [letter]: value },
                 }));
               },
+              { questionId: question.id, field: 'optionContent' },
             )}
           </div>
         ) : null}
@@ -3496,11 +3865,10 @@ function TabletOcrQuestionReviewPage({
 
         {isCompound ? (
           <div className="space-y-[4px]">
-            {question.subQuestions.length === 0 ? renderRecognitionAddSubButton(question, -1) : null}
+            {question.questionType !== 'cloze' ? renderRecognitionAddSubButton(question, question.subQuestions.length - 1) : null}
             {question.subQuestions.map((subQuestion, index) => (
               <div key={subQuestion.id}>
                 {renderRecognitionSubQuestion(question, subQuestion, index)}
-                {renderRecognitionAddSubButton(question, index)}
               </div>
             ))}
           </div>
@@ -3830,7 +4198,17 @@ function TabletOcrQuestionReviewPage({
       </header>
 
       <main className="absolute bottom-0 left-0 right-0 top-[88px] flex">
-        {selectedPendingBoxCount > 0 ? (
+        {manualLinkTarget ? (
+          <button
+            className="absolute left-[980px] top-1/2 z-30 flex h-[82px] w-[82px] -translate-y-1/2 flex-col items-center justify-center rounded-full bg-[#2f80ed] text-[18px] font-semibold leading-[22px] text-white shadow-[0_10px_28px_rgba(47,128,237,0.32)] active:bg-[#1d6fd6] disabled:bg-[#bdd6f5]"
+            disabled={!precisionRecognitionBox || !!manualLinkProcessingTarget}
+            onClick={() => void handlePrecisionRecognition()}
+            type="button"
+          >
+            <span>精准</span>
+            <span>识别</span>
+          </button>
+        ) : selectedPendingBoxCount > 0 ? (
           <button
             className="absolute left-[980px] top-1/2 z-30 flex h-[82px] w-[82px] -translate-y-1/2 flex-col items-center justify-center rounded-full bg-[#23bfb2] text-[18px] font-semibold leading-[22px] text-white shadow-[0_10px_28px_rgba(35,191,178,0.36)] active:bg-[#12a99d] disabled:bg-[#b7d8d5]"
             disabled={recognitionStatus === 'recognizing'}

@@ -18,12 +18,14 @@ import {
   SYSTEM_PROMPT_CROPPED,
   SYSTEM_PROMPT_SMART,
   SYSTEM_PROMPT_ANSWER_ONLY,
+  SYSTEM_PROMPT_OPTIONS_CONTENT_RECOGNIZE,
   buildUserMessage,
   buildUserMessageCropped,
   parseAIResponse,
   parseCroppedAIResponse,
   parseSmartAIResponse,
   parseAnswerOnlyResponse,
+  parseOptionsContentResponse,
   smartMatchQuestionsAndAnswers,
   generateMatchedQuestions,
   generateAnswerMarkers,
@@ -84,12 +86,12 @@ function tryFixAiJson(raw: string): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as RecognizeRequest & { croppedMode?: boolean; subjectInfo?: string; answerOnly?: boolean; globalMatch?: boolean; existingQuestions?: Array<{ id: number; number: number; content: string; questionType: string; hasAnswer: boolean }>; answerMode?: boolean };
-    const { pages, userBoxes = [], options = {}, croppedMode = false, subjectInfo, answerOnly = false, globalMatch = false, existingQuestions = [], answerMode = false } = body;
+    const body = (await request.json()) as RecognizeRequest & { croppedMode?: boolean; subjectInfo?: string; answerOnly?: boolean; globalMatch?: boolean; contentOnly?: boolean; existingQuestions?: Array<{ id: number; number: number; content: string; questionType: string; hasAnswer: boolean }>; answerMode?: boolean };
+    const { pages, userBoxes = [], options = {}, croppedMode = false, subjectInfo, answerOnly = false, globalMatch = false, contentOnly = false, existingQuestions = [], answerMode = false } = body;
 
     // 调试日志：打印请求概要
     console.log('[RecognizeAPI] 收到请求:', {
-      mode: globalMatch ? 'globalMatch' : croppedMode ? 'cropped' : answerMode ? 'answer' : 'full',
+      mode: globalMatch ? 'globalMatch' : contentOnly ? 'contentOnly' : croppedMode ? 'cropped' : answerMode ? 'answer' : 'full',
       pagesCount: pages?.length,
       existingQuestionsCount: existingQuestions?.length,
       bodySizeHint: JSON.stringify(body).length,
@@ -133,6 +135,8 @@ export async function POST(request: NextRequest) {
     if (globalMatch) {
       // 全局匹配模式：AI 从整页定位答案并关联到已有题目
       return handleGlobalMatchMode(client, pages, existingQuestions, customHeaders);
+    } else if (contentOnly) {
+      return handleContentOnlyMode(client, pages, customHeaders);
     } else if (answerMode) {
       // 纯答案提取模式：对答案框进行答案提取，传入已有题目用于关联匹配
       return handleSmartMode(client, pages, userBoxes, customHeaders, subjectInfo, options.validQuestionTypes, existingQuestions);
@@ -158,6 +162,95 @@ export async function POST(request: NextRequest) {
 /**
  * 智能识别模式处理
  */
+async function handleContentOnlyMode(
+  client: LLMClient,
+  croppedImages: PageImage[],
+  customHeaders: Record<string, string>,
+) {
+  const messages = [
+    { role: 'system' as const, content: SYSTEM_PROMPT_OPTIONS_CONTENT_RECOGNIZE },
+    { role: 'user' as const, content: buildUserMessageCropped(croppedImages) },
+  ];
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const sendProgress = (message: string) => {
+        const data = JSON.stringify({ type: 'progress', data: { message } });
+        controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+      };
+
+      const sendComplete = (result: object) => {
+        const data = JSON.stringify({ type: 'complete', data: { result } });
+        controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+      };
+
+      const sendError = (error: string) => {
+        const data = JSON.stringify({ type: 'error', data: { error } });
+        controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+      };
+
+      const MAX_RETRIES = 2;
+      let fullResponse = '';
+      let lastError = '';
+
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+        try {
+          sendProgress(attempt > 0 ? `网络异常，正在第${attempt}次重试...` : '正在精准识别内容...');
+          const llmStream = client.stream(messages, {
+            model: 'ep-m-20260522100054-r72qh',
+            temperature: 0.3,
+          });
+
+          fullResponse = '';
+          const streamTimeout = 60000;
+          const streamStart = Date.now();
+
+          for await (const chunk of llmStream) {
+            if (Date.now() - streamStart > streamTimeout) {
+              throw new Error('识别超时，请重试');
+            }
+            if (chunk.content) {
+              fullResponse += chunk.content.toString();
+            }
+          }
+          break;
+        } catch (streamError) {
+          lastError = streamError instanceof Error ? streamError.message : String(streamError);
+          if (attempt === MAX_RETRIES) {
+            sendError(lastError);
+            controller.close();
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
+      }
+
+      try {
+        sendProgress('正在解析精准识别结果...');
+        const result = parseOptionsContentResponse(fullResponse);
+        if (!result) {
+          sendError('识别结果格式不正确，请重试');
+          controller.close();
+          return;
+        }
+        sendComplete(result);
+      } catch (error) {
+        sendError(error instanceof Error ? error.message : '解析失败');
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
 async function handleSmartMode(
   client: LLMClient,
   croppedImages: PageImage[],
