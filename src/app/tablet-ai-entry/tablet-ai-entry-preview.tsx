@@ -3590,7 +3590,7 @@ function TabletOcrQuestionReviewPage({
     const isMenuOpen = recognitionAddSubMenu?.questionId === question.id && recognitionAddSubMenu.afterIndex === afterIndex;
 
     return (
-      <div className="relative flex justify-start pb-[12px] pt-[2px]" onClick={(event) => event.stopPropagation()}>
+      <div className="relative flex items-center justify-start gap-[18px] pb-[12px] pt-[2px]" onClick={(event) => event.stopPropagation()}>
         <button
           className="inline-flex h-[52px] items-center gap-[10px] rounded-[7px] border border-[#c9ced3] bg-white px-[20px] text-[24px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
           onClick={() => {
@@ -3605,6 +3605,10 @@ function TabletOcrQuestionReviewPage({
           <Plus className="h-[28px] w-[28px] stroke-[2.4]" />
           子题
         </button>
+        <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-[#b7bbc0] text-[22px] font-semibold leading-none text-white">
+          !
+        </span>
+        <span className="text-[22px] leading-none text-[#8b8f95]">请核对子题信息</span>
         {isMenuOpen && !isFixedSingleChoice ? (
           <div className="absolute left-0 top-[58px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
             {reviewQuestionTypeOptions.map((option) => (
@@ -3614,7 +3618,7 @@ function TabletOcrQuestionReviewPage({
                 onClick={() => insertRecognitionSubQuestion(question.id, afterIndex, option.value)}
                 type="button"
               >
-                {option.label}
+                {option.label.replace('题', '')}
               </button>
             ))}
           </div>
@@ -3632,31 +3636,44 @@ function TabletOcrQuestionReviewPage({
           <div className="flex items-center gap-[14px]">
             <span className="text-[22px] font-semibold leading-none text-[#202124]">（{index + 1}）</span>
             {isFixedSingleChoice ? (
-              <span className="inline-flex h-[34px] items-center rounded-[6px] border border-[#d7dde3] bg-[#eceff1] px-[14px] text-[18px] leading-none text-[#7b858f]">
+              <span className="inline-flex h-[34px] items-center rounded-[6px] bg-[#eceff1] px-[14px] text-[18px] leading-none text-[#5c6166]">
                 单选
               </span>
             ) : (
-              <QuestionTypeSelect
-                onChange={(value) => {
-                  updateQuestion(question.id, (currentQuestion) => ({
-                    ...currentQuestion,
-                    subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
-                      currentSubQuestion.id === subQuestion.id
-                        ? {
-                            ...currentSubQuestion,
-                            blankCount: value === 'fill_blank' ? Math.max(1, currentSubQuestion.blankCount) : currentSubQuestion.blankCount,
-                            optionContents: isChoiceLikeQuestionType(value)
-                              ? buildOptionContents(value, getDefaultOptionCount(value, currentSubQuestion.optionCount), currentSubQuestion.optionContents || {})
-                              : {},
-                            optionCount: getDefaultOptionCount(value, currentSubQuestion.optionCount),
-                            questionType: value,
-                          }
-                        : currentSubQuestion
-                    )),
-                  }));
-                }}
-                value={subQuestion.questionType}
-              />
+              <label className="relative inline-flex h-[34px] min-w-[104px] items-center rounded-[6px] bg-[#eceff1] pl-[14px] pr-[36px] text-[18px] leading-none text-[#5c6166]">
+                <select
+                  aria-label="子题题型"
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  onChange={(event) => {
+                    const value = event.target.value as ReviewQuestionType;
+                    updateQuestion(question.id, (currentQuestion) => ({
+                      ...currentQuestion,
+                      subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                        currentSubQuestion.id === subQuestion.id
+                          ? {
+                              ...currentSubQuestion,
+                              blankCount: value === 'fill_blank' ? Math.max(1, currentSubQuestion.blankCount) : currentSubQuestion.blankCount,
+                              optionContents: isChoiceLikeQuestionType(value)
+                                ? buildOptionContents(value, getDefaultOptionCount(value, currentSubQuestion.optionCount), currentSubQuestion.optionContents || {})
+                                : {},
+                              optionCount: getDefaultOptionCount(value, currentSubQuestion.optionCount),
+                              questionType: value,
+                            }
+                          : currentSubQuestion
+                      )),
+                    }));
+                  }}
+                  value={subQuestion.questionType}
+                >
+                  {reviewQuestionTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label.replace('题', '')}
+                    </option>
+                  ))}
+                </select>
+                <span>{getReviewQuestionTypeLabel(subQuestion.questionType).replace('题', '')}</span>
+                <ChevronDown className="absolute right-[10px] top-1/2 h-[22px] w-[22px] -translate-y-1/2 stroke-[2.4] text-[#555b61]" />
+              </label>
             )}
           </div>
           <button
