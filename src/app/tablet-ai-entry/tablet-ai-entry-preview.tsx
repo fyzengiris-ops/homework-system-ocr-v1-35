@@ -3426,7 +3426,7 @@ function TabletOcrQuestionReviewPage({
           })}
           {pagePrecisionBox ? (
             <div
-              className="absolute border-2 border-[#2f80ed] bg-[#eaf3ff]/24 shadow-[0_0_0_3px_rgba(47,128,237,0.16)]"
+              className="absolute border-2 border-[#26c9bc] bg-[#ddf8f4]/25"
               onClick={(event) => event.stopPropagation()}
               onPointerDown={(event) => startReviewBoxDrag(event, pagePrecisionBox, 'move')}
               style={{
@@ -3436,9 +3436,6 @@ function TabletOcrQuestionReviewPage({
                 width: `${pagePrecisionBox.width}%`,
               }}
             >
-              <span className="absolute left-[4px] top-[4px] rounded-[4px] bg-[#2f80ed] px-[7px] py-[4px] text-[13px] font-medium leading-none text-white shadow-[0_1px_5px_rgba(31,44,58,0.14)]">
-                精准识别
-              </span>
               <button
                 aria-label="取消精准识别框"
                 className="absolute right-[4px] top-[4px] flex h-[22px] w-[22px] items-center justify-center rounded-full bg-[#202124]/50 text-white shadow-[0_1px_5px_rgba(31,44,58,0.16)] active:bg-[#000]"
@@ -3453,7 +3450,7 @@ function TabletOcrQuestionReviewPage({
               </button>
               <button
                 aria-label="调整精准识别框大小"
-                className="absolute bottom-[-8px] right-[-8px] h-[18px] w-[18px] rounded-full border-[2px] border-white bg-[#2f80ed] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
+                className="absolute bottom-[-8px] right-[-8px] h-[18px] w-[18px] rounded-full border-[2px] border-white bg-[#26c9bc] shadow-[0_2px_8px_rgba(0,0,0,0.18)]"
                 onPointerDown={(event) => startReviewBoxDrag(event, pagePrecisionBox, 'resize')}
                 type="button"
               />
@@ -3772,8 +3769,8 @@ function TabletOcrQuestionReviewPage({
     return (
       <div className="space-y-[18px] rounded-[8px] border border-[#e0e5e9] bg-white p-[18px]">
         <div>
-          <div className="mb-[8px] text-[18px] leading-none text-[#68727d]">题干</div>
-          <div className="mb-[8px] flex justify-end">
+          <div className="mb-[8px] flex items-center gap-[6px] text-[18px] leading-none text-[#68727d]">
+            <span>题干</span>
             {renderManualLinkButton({ questionId: question.id, field: 'content' }, '关联父题题干')}
           </div>
           {isManualLinkTargetProcessing({ questionId: question.id, field: 'content' }) ? (
@@ -4198,9 +4195,9 @@ function TabletOcrQuestionReviewPage({
       </header>
 
       <main className="absolute bottom-0 left-0 right-0 top-[88px] flex">
-        {manualLinkTarget ? (
+        {manualLinkTarget && precisionRecognitionBox ? (
           <button
-            className="absolute left-[980px] top-1/2 z-30 flex h-[82px] w-[82px] -translate-y-1/2 flex-col items-center justify-center rounded-full bg-[#2f80ed] text-[18px] font-semibold leading-[22px] text-white shadow-[0_10px_28px_rgba(47,128,237,0.32)] active:bg-[#1d6fd6] disabled:bg-[#bdd6f5]"
+            className="absolute left-[980px] top-1/2 z-30 flex h-[82px] w-[82px] -translate-y-1/2 flex-col items-center justify-center rounded-full bg-[#23bfb2] text-[18px] font-semibold leading-[22px] text-white shadow-[0_10px_28px_rgba(35,191,178,0.36)] active:bg-[#12a99d] disabled:bg-[#b7d8d5]"
             disabled={!precisionRecognitionBox || !!manualLinkProcessingTarget}
             onClick={() => void handlePrecisionRecognition()}
             type="button"
