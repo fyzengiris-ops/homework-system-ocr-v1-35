@@ -3590,9 +3590,9 @@ function TabletOcrQuestionReviewPage({
     const isMenuOpen = recognitionAddSubMenu?.questionId === question.id && recognitionAddSubMenu.afterIndex === afterIndex;
 
     return (
-      <div className="relative py-[12px]" onClick={(event) => event.stopPropagation()}>
+      <div className="relative flex justify-start pb-[12px] pt-[2px]" onClick={(event) => event.stopPropagation()}>
         <button
-          className="flex h-[44px] w-full items-center justify-center gap-[8px] rounded-[6px] border border-dashed border-[#23bfb2] bg-white text-[20px] font-medium leading-none text-[#16a69a] active:bg-[#effcfb]"
+          className="inline-flex h-[52px] items-center gap-[10px] rounded-[7px] border border-[#c9ced3] bg-white px-[20px] text-[24px] leading-none text-[#4d5258] active:bg-[#f4f6f7]"
           onClick={() => {
             if (isFixedSingleChoice) {
               insertRecognitionSubQuestion(question.id, afterIndex, 'single_choice');
@@ -3602,11 +3602,11 @@ function TabletOcrQuestionReviewPage({
           }}
           type="button"
         >
-          <Plus className="h-[22px] w-[22px]" />
-          添加子题
+          <Plus className="h-[28px] w-[28px] stroke-[2.4]" />
+          子题
         </button>
         {isMenuOpen && !isFixedSingleChoice ? (
-          <div className="absolute left-1/2 top-[60px] z-30 w-[188px] -translate-x-1/2 overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
+          <div className="absolute left-0 top-[58px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
             {reviewQuestionTypeOptions.map((option) => (
               <button
                 key={option.value}
@@ -3680,13 +3680,10 @@ function TabletOcrQuestionReviewPage({
 
         {question.questionType !== 'cloze' ? (
           <div className="mb-[16px]">
-            <div className="mb-[8px] text-[18px] leading-none text-[#68727d]">子题题干</div>
-            <div className="mb-[8px] flex justify-end">
+            <div className="mb-[8px] flex items-center gap-[6px] text-[18px] leading-none text-[#68727d]">
+              <span>子题题干</span>
               {renderManualLinkButton({ questionId: question.id, field: 'content', subQuestionId: subQuestion.id }, '关联子题题干')}
             </div>
-            {isManualLinkTargetProcessing({ questionId: question.id, field: 'content', subQuestionId: subQuestion.id }) ? (
-              <div className="mb-[8px]">{renderFieldLoading('子题题干识别中...')}</div>
-            ) : null}
             {renderRecognitionTextAreaV2(subQuestion.content || '', (value) => {
               updateQuestion(question.id, (currentQuestion) => ({
                 ...currentQuestion,
@@ -3694,7 +3691,7 @@ function TabletOcrQuestionReviewPage({
                   currentSubQuestion.id === subQuestion.id ? { ...currentSubQuestion, content: value } : currentSubQuestion
                 )),
               }));
-            }, '子题题干')}
+            }, '子题题干', isManualLinkTargetProcessing({ questionId: question.id, field: 'content', subQuestionId: subQuestion.id }), '子题题干识别中...')}
           </div>
         ) : null}
 
@@ -3773,12 +3770,9 @@ function TabletOcrQuestionReviewPage({
             <span>题干</span>
             {renderManualLinkButton({ questionId: question.id, field: 'content' }, '关联父题题干')}
           </div>
-          {isManualLinkTargetProcessing({ questionId: question.id, field: 'content' }) ? (
-            <div className="mb-[8px]">{renderFieldLoading('题干识别中...')}</div>
-          ) : null}
           {renderRecognitionTextAreaV2(question.content || '', (value) => {
             updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, content: value }));
-          })}
+          }, '题干', isManualLinkTargetProcessing({ questionId: question.id, field: 'content' }), '题干识别中...')}
         </div>
 
         {isChoiceLikeQuestionType(question.questionType) ? (
