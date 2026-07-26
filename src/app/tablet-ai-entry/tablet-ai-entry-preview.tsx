@@ -3629,6 +3629,7 @@ function TabletOcrQuestionReviewPage({
 
   const renderRecognitionSubQuestion = (question: ReviewQuestion, subQuestion: ReviewQuestion['subQuestions'][number], index: number) => {
     const isFixedSingleChoice = subject.includes('英语') && (question.questionType === 'reading_comprehension' || question.questionType === 'cloze');
+    const isEnglishClozeSubQuestion = subject.includes('英语') && question.questionType === 'cloze';
 
     return (
       <div className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
@@ -3714,7 +3715,7 @@ function TabletOcrQuestionReviewPage({
 
         {isChoiceLikeQuestionType(subQuestion.questionType) ? (
           <div>
-            {subQuestion.questionType !== 'judge' ? (
+            {subQuestion.questionType !== 'judge' && !isEnglishClozeSubQuestion ? (
               <div className="mb-[12px]" onClick={(event) => event.stopPropagation()}>
                 <CountStepper
                   label="选项数"
