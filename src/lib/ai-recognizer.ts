@@ -5,9 +5,9 @@
 
 // ==================== 学科题型映射 ====================
 export const SUBJECT_QUESTION_TYPES: Record<string, string[]> = {
-  '英语': ['单选题', '多选题', '填空题', '完形填空', '阅读理解', '问答题', '翻译题', '书面表达', '短文填空', '选词填空', '任务型阅读'],
-  '物理': ['单选题', '多选题', '判断题', '填空题', '计算题', '解答题', '证明题', '材料题', '综合题', '实验探究题', '问答题'],
-  '数学': ['单选题', '多选题', '判断题', '填空题', '计算题', '解答题', '证明题', '材料题', '综合题', '实验探究题', '问答题'],
+  '英语': ['单选题', '多选题', '填空题', '判断题', '完型填空', '阅读理解', '问答题', '翻译题', '听力题', '材料题', '书面表达', '短文改错', '短文填空'],
+  '物理': ['单选题', '多选题', '填空题', '判断题', '问答题', '材料题', '解答题', '计算题', '证明题', '应用题'],
+  '数学': ['单选题', '多选题', '填空题', '判断题', '问答题', '材料题', '解答题', '计算题', '证明题', '应用题'],
 };
 
 /** 根据学科获取有效题型列表 */
@@ -18,8 +18,8 @@ export function getValidQuestionTypes(subject: string): string[] {
   for (const [key, types] of Object.entries(SUBJECT_QUESTION_TYPES)) {
     if (subject.includes(key)) return types;
   }
-  // 默认返回所有题型
-  return Object.values(SUBJECT_QUESTION_TYPES).flat().filter((v, i, a) => a.indexOf(v) === i);
+  // 默认按非英语学科题型处理
+  return SUBJECT_QUESTION_TYPES['数学'];
 }
 
 import type {

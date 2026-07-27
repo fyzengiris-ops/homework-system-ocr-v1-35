@@ -50,7 +50,24 @@ type SubjectMode = 'single' | 'multiple';
 type OcrDetectStatus = 'loading' | 'ready' | 'failed';
 type CaptureCloseTarget = 'mode' | 'content' | 'upload' | null;
 type ReviewDisplayMode = 'recognition' | 'image';
-type ReviewQuestionType = 'single_choice' | 'multiple_choice' | 'fill_blank' | 'short_answer' | 'material' | 'judge' | 'reading_comprehension' | 'cloze';
+type ReviewQuestionType =
+  | 'single_choice'
+  | 'multiple_choice'
+  | 'fill_blank'
+  | 'judge'
+  | 'cloze'
+  | 'reading_comprehension'
+  | 'short_answer'
+  | 'translation'
+  | 'listening'
+  | 'material'
+  | 'writing'
+  | 'error_correction'
+  | 'short_fill'
+  | 'solution'
+  | 'calculation'
+  | 'proof'
+  | 'application';
 type QuestionTypeRecognitionStatus = 'pending' | 'recognized' | 'failed' | 'manual' | 'stale';
 type CropDragAction = 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se' | 'resize-n' | 'resize-s' | 'resize-w' | 'resize-e';
 type TabletManualLinkField = 'content' | 'optionContent' | 'answer' | 'analysis';
@@ -151,21 +168,60 @@ type ReviewAiMatchedQuestion = {
 
 const SINGLE_SUBJECT = '高中数学';
 
-const reviewQuestionTypeOptions: Array<{ value: ReviewQuestionType; label: string }> = [
+const englishReviewQuestionTypeOptions: Array<{ value: ReviewQuestionType; label: string }> = [
   { value: 'single_choice', label: '单选题' },
   { value: 'multiple_choice', label: '多选题' },
   { value: 'fill_blank', label: '填空题' },
+  { value: 'judge', label: '判断题' },
+  { value: 'cloze', label: '完型填空' },
+  { value: 'reading_comprehension', label: '阅读理解' },
+  { value: 'short_answer', label: '问答题' },
+  { value: 'translation', label: '翻译题' },
+  { value: 'listening', label: '听力题' },
+  { value: 'material', label: '材料题' },
+  { value: 'writing', label: '书面表达' },
+  { value: 'error_correction', label: '短文改错' },
+  { value: 'short_fill', label: '短文填空' },
+];
+
+const generalReviewQuestionTypeOptions: Array<{ value: ReviewQuestionType; label: string }> = [
+  { value: 'single_choice', label: '单选题' },
+  { value: 'multiple_choice', label: '多选题' },
+  { value: 'fill_blank', label: '填空题' },
+  { value: 'judge', label: '判断题' },
   { value: 'short_answer', label: '问答题' },
   { value: 'material', label: '材料题' },
-  { value: 'judge', label: '判断题' },
-  { value: 'reading_comprehension', label: '阅读理解' },
-  { value: 'cloze', label: '完形填空' },
+  { value: 'solution', label: '解答题' },
+  { value: 'calculation', label: '计算题' },
+  { value: 'proof', label: '证明题' },
+  { value: 'application', label: '应用题' },
 ];
+
+const allReviewQuestionTypeOptions = [...englishReviewQuestionTypeOptions, ...generalReviewQuestionTypeOptions].filter(
+  (option, index, options) => options.findIndex((currentOption) => currentOption.value === option.value) === index,
+);
+
+function isEnglishSubjectName(subject: string) {
+  return subject.includes('英语');
+}
+
+function getReviewQuestionTypeOptions(subject: string) {
+  return isEnglishSubjectName(subject) ? englishReviewQuestionTypeOptions : generalReviewQuestionTypeOptions;
+}
 
 function mapRecognizedQuestionType(questionType: string | undefined): ReviewQuestionType {
   const normalizedType = questionType || '';
   if (normalizedType.includes('阅读理解')) return 'reading_comprehension';
   if (normalizedType.includes('完形填空') || normalizedType.includes('完型填空')) return 'cloze';
+  if (normalizedType.includes('翻译')) return 'translation';
+  if (normalizedType.includes('听力')) return 'listening';
+  if (normalizedType.includes('书面表达') || normalizedType.includes('作文') || normalizedType.includes('写作')) return 'writing';
+  if (normalizedType.includes('短文改错')) return 'error_correction';
+  if (normalizedType.includes('短文填空')) return 'short_fill';
+  if (normalizedType.includes('解答')) return 'solution';
+  if (normalizedType.includes('计算')) return 'calculation';
+  if (normalizedType.includes('证明')) return 'proof';
+  if (normalizedType.includes('应用')) return 'application';
   if (normalizedType.includes('单选')) return 'single_choice';
   if (normalizedType.includes('多选')) return 'multiple_choice';
   if (normalizedType.includes('填空') || normalizedType.includes('空')) return 'fill_blank';
@@ -2080,7 +2136,7 @@ function AddBoxModeTipDialog({
 }
 
 function getReviewQuestionTypeLabel(type: ReviewQuestionType) {
-  return reviewQuestionTypeOptions.find((option) => option.value === type)?.label || '问答题';
+  return allReviewQuestionTypeOptions.find((option) => option.value === type)?.label || '问答题';
 }
 
 function createInitialReviewQuestions(boxes: RecognitionBox[], displayMode: ReviewDisplayMode): ReviewQuestion[] {
@@ -2207,10 +2263,12 @@ function StepSegmentedControl({
 }
 
 function QuestionTypeSelect({
+  options,
   status = 'recognized',
   value,
   onChange,
 }: {
+  options: Array<{ value: ReviewQuestionType; label: string }>;
   status?: QuestionTypeRecognitionStatus;
   value: ReviewQuestionType;
   onChange: (value: ReviewQuestionType) => void;
@@ -2238,7 +2296,7 @@ function QuestionTypeSelect({
         onChange={(event) => onChange(event.target.value as ReviewQuestionType)}
         value={value}
       >
-        {reviewQuestionTypeOptions.map((option) => (
+        {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
           </option>
@@ -2434,7 +2492,8 @@ function AnswerConfigPanel({
   subject: string;
 }) {
   const [isAddTypeMenuOpen, setIsAddTypeMenuOpen] = useState(false);
-  const isEnglishSubject = subject.includes('英语');
+  const isEnglishSubject = isEnglishSubjectName(subject);
+  const questionTypeOptions = getReviewQuestionTypeOptions(subject);
 
   if (question.questionType === 'single_choice' || question.questionType === 'multiple_choice') {
     return <CountStepper label="选项数" onChange={onOptionCountChange} value={question.optionCount} />;
@@ -2486,7 +2545,7 @@ function AnswerConfigPanel({
             </button>
             {isAddTypeMenuOpen && !isFixedSingleChoiceSubQuestion ? (
               <div className="absolute left-0 top-[52px] z-30 w-[188px] overflow-hidden rounded-[9px] border border-[#dfe4e8] bg-white shadow-[0_14px_32px_rgba(31,44,58,0.18)]">
-                {reviewQuestionTypeOptions.map((option) => (
+                {questionTypeOptions.map((option) => (
                   <button
                     key={option.value}
                     className="h-[46px] w-full px-[18px] text-left text-[20px] leading-none text-[#4d5258] active:bg-[#f3f5f6]"
@@ -2525,7 +2584,7 @@ function AnswerConfigPanel({
                     onChange={(event) => onSubQuestionTypeChange(subQuestion.id, event.target.value as ReviewQuestionType)}
                     value={subQuestion.questionType}
                   >
-                    {reviewQuestionTypeOptions.map((option) => (
+                    {questionTypeOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
                       </option>
@@ -2637,8 +2696,24 @@ function TabletOcrQuestionReviewPage({
   const hasMovedReviewBoxRef = useRef(false);
   const recognitionStartedRef = useRef(false);
   const answerMatchStartedRef = useRef(false);
+  const toastTimerRef = useRef<number | null>(null);
   const validQuestionTypes = getValidQuestionTypes(subject || '');
+  const reviewQuestionTypeOptions = getReviewQuestionTypeOptions(subject);
   const shouldShowAnswerAnalysis = mode !== 'questions_only';
+  const [toastMessage, setToastMessage] = useState('');
+
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMessage('');
+      toastTimerRef.current = null;
+    }, 1800);
+  };
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+  }, []);
 
   const requestAiQuestionTypes = async (questionSnapshot: ReviewQuestion[]) => {
     const response = await fetch('/api/recognize-questions', {
@@ -3297,6 +3372,7 @@ function TabletOcrQuestionReviewPage({
         subQuestions: nextSubQuestions,
       };
     });
+    showToast('子题添加成功');
     setRecognitionAddSubMenu(null);
   };
 
@@ -3887,7 +3963,7 @@ function TabletOcrQuestionReviewPage({
   };
 
   const renderRecognitionAddSubButton = (question: ReviewQuestion, afterIndex: number) => {
-    const isFixedSingleChoice = subject.includes('英语') && (question.questionType === 'reading_comprehension' || question.questionType === 'cloze');
+    const isFixedSingleChoice = isEnglishSubjectName(subject) && (question.questionType === 'reading_comprehension' || question.questionType === 'cloze');
     const isMenuOpen = recognitionAddSubMenu?.questionId === question.id && recognitionAddSubMenu.afterIndex === afterIndex;
 
     return (
@@ -3929,8 +4005,8 @@ function TabletOcrQuestionReviewPage({
   };
 
   const renderRecognitionSubQuestion = (question: ReviewQuestion, subQuestion: ReviewQuestion['subQuestions'][number], index: number) => {
-    const isFixedSingleChoice = subject.includes('英语') && (question.questionType === 'reading_comprehension' || question.questionType === 'cloze');
-    const isEnglishClozeSubQuestion = subject.includes('英语') && question.questionType === 'cloze';
+    const isFixedSingleChoice = isEnglishSubjectName(subject) && (question.questionType === 'reading_comprehension' || question.questionType === 'cloze');
+    const isEnglishClozeSubQuestion = isEnglishSubjectName(subject) && question.questionType === 'cloze';
 
     return (
       <div className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
@@ -4375,7 +4451,7 @@ function TabletOcrQuestionReviewPage({
 
   const renderImageModeAnswerAnalysis = (question: ReviewQuestion) => {
     if (!shouldShowAnswerAnalysis) return null;
-    const isEnglishSubject = subject.includes('英语');
+    const isEnglishSubject = isEnglishSubjectName(subject);
 
     if (question.questionType === 'material' || (isEnglishSubject && question.questionType === 'reading_comprehension')) {
       return (
@@ -4408,7 +4484,7 @@ function TabletOcrQuestionReviewPage({
   };
 
   const renderRecognitionContent = (question: ReviewQuestion) => {
-    const isEnglishSubject = subject.includes('英语');
+    const isEnglishSubject = isEnglishSubjectName(subject);
     const isCloze = isEnglishSubject && question.questionType === 'cloze';
     const isCompound = question.questionType === 'material' || (isEnglishSubject && question.questionType === 'reading_comprehension') || isCloze;
 
@@ -4599,6 +4675,7 @@ function TabletOcrQuestionReviewPage({
                       : currentQuestion.subQuestions,
               }));
             }}
+            options={reviewQuestionTypeOptions}
             status={question.questionTypeStatus}
             value={question.questionType}
           />
@@ -4726,6 +4803,7 @@ function TabletOcrQuestionReviewPage({
                     },
                   ],
                 }));
+                showToast('子题添加成功');
               }}
               onBlankCountChange={(value) => {
                 updateQuestion(question.id, (currentQuestion) => ({
@@ -4868,6 +4946,12 @@ function TabletOcrQuestionReviewPage({
           加入试卷
         </button>
       </header>
+
+      {toastMessage ? (
+        <div className="absolute left-1/2 top-[104px] z-50 -translate-x-1/2 rounded-[8px] bg-[rgba(32,33,36,0.88)] px-[24px] py-[13px] text-[20px] font-medium leading-none text-white shadow-[0_12px_30px_rgba(0,0,0,0.22)]">
+          {toastMessage}
+        </div>
+      ) : null}
 
       <main className="absolute bottom-0 left-0 right-0 top-[88px] flex">
         {manualLinkTarget && precisionRecognitionBox ? (
