@@ -53,7 +53,7 @@ type ReviewDisplayMode = 'recognition' | 'image';
 type ReviewQuestionType = 'single_choice' | 'multiple_choice' | 'fill_blank' | 'short_answer' | 'material' | 'judge' | 'reading_comprehension' | 'cloze';
 type QuestionTypeRecognitionStatus = 'pending' | 'recognized' | 'failed' | 'manual' | 'stale';
 type CropDragAction = 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se' | 'resize-n' | 'resize-s' | 'resize-w' | 'resize-e';
-type TabletManualLinkField = 'content' | 'optionContent';
+type TabletManualLinkField = 'content' | 'optionContent' | 'answer' | 'analysis';
 type TabletManualLinkTarget = {
   questionId: string;
   field: TabletManualLinkField;
@@ -85,6 +85,10 @@ type OptionsContentRecognitionResult = {
   options: Array<{ label: string; content: string }>;
   plainContent: string;
 };
+type AnswerOnlyRecognitionResult = {
+  answer: string;
+  analysis: string;
+};
 
 type ReviewQuestion = {
   id: string;
@@ -97,6 +101,9 @@ type ReviewQuestion = {
   };
   questionType: ReviewQuestionType;
   questionTypeStatus: QuestionTypeRecognitionStatus;
+  answer?: string;
+  analysis?: string;
+  blankAnswers: string[];
   content?: string;
   optionContents?: Record<string, string>;
   optionCount: number;
@@ -104,6 +111,9 @@ type ReviewQuestion = {
   subQuestions: Array<{
     id: string;
     questionType: ReviewQuestionType;
+    answer?: string;
+    analysis?: string;
+    blankAnswers: string[];
     content?: string;
     optionContents?: Record<string, string>;
     optionCount: number;
@@ -124,8 +134,14 @@ type ReviewAiMatchedQuestion = {
   optionContents?: Record<string, string>;
   optionCount?: number;
   blankCount?: number;
+  answer?: string | null;
+  analysis?: string | null;
+  blankAnswers?: string[];
   subQuestions?: Array<{
     questionType?: string;
+    answer?: string | null;
+    analysis?: string | null;
+    blankAnswers?: string[];
     content?: string;
     optionContents?: Record<string, string>;
     optionCount?: number;
@@ -214,8 +230,40 @@ function buildOptionContents(
   }, {});
 }
 
+function createBlankAnswers(count: number, current: string[] = []) {
+  return Array.from({ length: Math.max(1, count || 1) }, (_, index) => current[index] || '');
+}
+
 function formatRecognizedReviewContent(text: string | undefined) {
   return (text || '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function isUsableText(value: string | undefined) {
+  return Boolean(value?.trim());
+}
+
+function hasQuestionAnswer(question: Pick<ReviewQuestion, 'answer' | 'blankAnswers'> | ReviewQuestion['subQuestions'][number]) {
+  return isUsableText(question.answer) || question.blankAnswers?.some(isUsableText);
+}
+
+function normalizeChoiceAnswer(questionType: ReviewQuestionType, value: string) {
+  const normalized = value.trim();
+  if (!normalized) return '';
+  if (questionType === 'judge') {
+    if (/^(错|错误|否|×|✕|✗|B)$/i.test(normalized)) return 'B';
+    if (/^(对|正确|是|√|✓|A)$/i.test(normalized)) return 'A';
+  }
+  const match = normalized.toUpperCase().match(/[A-Z]/);
+  return isChoiceLikeQuestionType(questionType) && match ? match[0] : normalized;
+}
+
+function splitAnswerToBlanks(value: string, count: number) {
+  const parts = value
+    .split(/\s*(?:[；;、,，]|\n)\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length > 1) return createBlankAnswers(Math.max(count, parts.length), parts);
+  return createBlankAnswers(count, [value.trim()]);
 }
 
 function splitChoiceContent(content: string | undefined) {
@@ -285,11 +333,79 @@ function splitNumberedSubQuestionSegments(content: string | undefined) {
   };
 }
 
+function splitAnswerSegmentsForSubQuestions(content: string | undefined, count: number) {
+  const normalized = formatRecognizedReviewContent(content);
+  if (count === 1 && normalized) {
+    return [normalized.replace(/^(?:[（(]\s*1\s*[）)]|1\s*[.．、)）]|①)\s*/, '').trim()];
+  }
+  const split = splitNumberedSubQuestionSegments(content);
+  if (!split || split.segments.length === 0) return null;
+  const segments = createBlankAnswers(count, split.segments);
+  return segments.some((segment) => segment.trim()) ? segments : null;
+}
+
+function applyAnswerValue<T extends {
+  answer?: string;
+  blankAnswers: string[];
+  blankCount: number;
+  optionContents?: Record<string, string>;
+  questionType: ReviewQuestionType;
+}>(entity: T, value: string): T {
+  const normalized = value.trim();
+  if (!normalized) return entity;
+  if (entity.questionType === 'fill_blank') {
+    return {
+      ...entity,
+      answer: normalized,
+      blankAnswers: splitAnswerToBlanks(normalized, entity.blankCount),
+    };
+  }
+  if (isChoiceLikeQuestionType(entity.questionType)) {
+    return {
+      ...entity,
+      answer: normalizeChoiceAnswer(entity.questionType, normalized),
+    };
+  }
+  return { ...entity, answer: normalized };
+}
+
+function mergeAnswerToReviewQuestion(question: ReviewQuestion, answer: string, analysis: string): ReviewQuestion {
+  const answerText = answer.trim();
+  const analysisText = analysis.trim();
+  if (question.subQuestions.length > 0) {
+    const answerSegments = splitAnswerSegmentsForSubQuestions(answerText, question.subQuestions.length);
+    const analysisSegments = splitAnswerSegmentsForSubQuestions(analysisText, question.subQuestions.length);
+    if (answerSegments || analysisSegments) {
+      return {
+        ...question,
+        subQuestions: question.subQuestions.map((subQuestion, index) => {
+          let nextSubQuestion = subQuestion;
+          const subAnswer = answerSegments?.[index]?.trim() || '';
+          const subAnalysis = analysisSegments?.[index]?.trim() || '';
+          if (subAnswer) nextSubQuestion = applyAnswerValue(nextSubQuestion, subAnswer);
+          if (subAnalysis) nextSubQuestion = { ...nextSubQuestion, analysis: subAnalysis };
+          return nextSubQuestion;
+        }),
+        answer: answerSegments ? question.answer : (answerText || question.answer),
+        analysis: analysisSegments ? question.analysis : (analysisText || question.analysis),
+      };
+    }
+  }
+
+  let nextQuestion = question;
+  if (answerText) nextQuestion = applyAnswerValue(nextQuestion, answerText);
+  if (analysisText) nextQuestion = { ...nextQuestion, analysis: analysisText };
+  return nextQuestion;
+}
+
 function createReviewSubQuestion(
   parentId: string,
   index: number,
   questionType: ReviewQuestionType,
   source?: {
+    answer?: string | null;
+    analysis?: string | null;
+    blankAnswers?: string[];
     content?: string;
     optionContents?: Record<string, string>;
     optionCount?: number | null;
@@ -301,7 +417,10 @@ function createReviewSubQuestion(
 
   return {
     id: `${parentId}-ai-sub-${index + 1}-${Date.now()}`,
+    answer: typeof source?.answer === 'string' ? source.answer : '',
+    analysis: typeof source?.analysis === 'string' ? source.analysis : '',
     blankCount: getDefaultBlankCount(questionType, source?.blankCount ?? undefined),
+    blankAnswers: createBlankAnswers(getDefaultBlankCount(questionType, source?.blankCount ?? undefined), source?.blankAnswers),
     content: isChoiceLikeQuestionType(questionType) ? (choiceStructure?.stem || formatRecognizedReviewContent(source?.content)) : formatRecognizedReviewContent(source?.content),
     optionContents: isChoiceLikeQuestionType(questionType)
       ? buildOptionContents(questionType, optionCount, source?.optionContents || choiceStructure?.optionContents || {})
@@ -1980,6 +2099,9 @@ function createInitialReviewQuestions(boxes: RecognitionBox[], displayMode: Revi
       },
       questionType: 'short_answer',
       questionTypeStatus: 'pending',
+      answer: '',
+      analysis: '',
+      blankAnswers: [''],
       content: '',
       optionContents: {},
       optionCount: 4,
@@ -2022,10 +2144,16 @@ function applyAiQuestionType(question: ReviewQuestion, matchedQuestion: ReviewAi
 
   return {
     ...question,
+    answer: typeof matchedQuestion.answer === 'string' ? matchedQuestion.answer : question.answer,
+    analysis: typeof matchedQuestion.analysis === 'string' ? matchedQuestion.analysis : question.analysis,
     content: isChoiceLikeQuestionType(questionType)
       ? (splitChoice?.stem || rawContent)
       : (numberedSplit?.parentContent || rawContent),
     blankCount: questionType === 'cloze' ? clozeSubQuestionCount : getDefaultBlankCount(questionType, matchedQuestion.blankCount),
+    blankAnswers: createBlankAnswers(
+      questionType === 'cloze' ? clozeSubQuestionCount : getDefaultBlankCount(questionType, matchedQuestion.blankCount),
+      matchedQuestion.blankAnswers || question.blankAnswers,
+    ),
     optionContents: isChoiceLikeQuestionType(questionType)
       ? buildOptionContents(questionType, optionCount, matchedQuestion.optionContents || splitChoice?.optionContents || question.optionContents || {})
       : {},
@@ -2451,12 +2579,14 @@ function AnswerConfigPanel({
 function TabletOcrQuestionReviewPage({
   boxes,
   materialPages,
+  mode,
   onBackToSelection,
   onExit,
   subject,
 }: {
   boxes: RecognitionBox[];
   materialPages: MaterialPage[];
+  mode: RecognitionMode;
   onBackToSelection: () => void;
   onExit: () => void;
   subject: string;
@@ -2476,7 +2606,9 @@ function TabletOcrQuestionReviewPage({
   const [precisionRecognitionBox, setPrecisionRecognitionBox] = useState<RecognitionBox | null>(null);
   const [editingCropQuestionId, setEditingCropQuestionId] = useState<string | null>(null);
   const [recognitionStatus, setRecognitionStatus] = useState<'idle' | 'recognizing' | 'done' | 'failed'>('idle');
+  const [answerMatchStatus, setAnswerMatchStatus] = useState<'idle' | 'matching' | 'done' | 'failed'>('idle');
   const [recognitionMessage, setRecognitionMessage] = useState('正在准备识别题型...');
+  const [answerMatchMessage, setAnswerMatchMessage] = useState('');
   const [pendingReviewBoxIds, setPendingReviewBoxIds] = useState<Set<string>>(new Set());
   const [recognizingReviewBoxIds, setRecognizingReviewBoxIds] = useState<Set<string>>(new Set());
   const [isReviewAddBoxMode, setIsReviewAddBoxMode] = useState(false);
@@ -2501,7 +2633,9 @@ function TabletOcrQuestionReviewPage({
   const hasDraggedCropRef = useRef(false);
   const hasMovedReviewBoxRef = useRef(false);
   const recognitionStartedRef = useRef(false);
+  const answerMatchStartedRef = useRef(false);
   const validQuestionTypes = getValidQuestionTypes(subject || '');
+  const shouldShowAnswerAnalysis = mode !== 'questions_only';
 
   const requestAiQuestionTypes = async (questionSnapshot: ReviewQuestion[]) => {
     const response = await fetch('/api/recognize-questions', {
@@ -2571,6 +2705,98 @@ function TabletOcrQuestionReviewPage({
 
         if (event.type === 'complete') {
           return event.data?.result?.matchedQuestions || [];
+        }
+      }
+
+      if (done) break;
+    }
+
+    return [];
+  };
+
+  const requestGlobalAnswerMatches = async (questionSnapshot: ReviewQuestion[]) => {
+    const questionIdByMatchId = new Map<number, string>();
+    const existingQuestions = questionSnapshot.map((question, index) => {
+      const matchId = index + 1;
+      questionIdByMatchId.set(matchId, question.id);
+      return {
+        id: matchId,
+        number: index + 1,
+        content: question.content || '',
+        questionType: getReviewQuestionTypeLabel(question.questionType),
+        hasAnswer: hasQuestionAnswer(question),
+        subQuestions: question.subQuestions.map((subQuestion, subIndex) => ({
+          id: subIndex + 1,
+          number: subIndex + 1,
+          content: subQuestion.content || '',
+          questionType: getReviewQuestionTypeLabel(subQuestion.questionType),
+          hasAnswer: hasQuestionAnswer(subQuestion),
+        })),
+      };
+    });
+    const pagesForMatch = mode === 'separate_answer'
+      ? materialPages.filter((page) => page.role === 'answer')
+      : materialPages;
+    const sourcePages = pagesForMatch.length > 0 ? pagesForMatch : materialPages;
+
+    const response = await fetch('/api/recognize-questions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        existingQuestions,
+        globalMatch: true,
+        pages: sourcePages.map((page) => ({
+          pageNumber: page.pageNumber,
+          imageData: page.imageData,
+          width: page.naturalWidth,
+          height: page.naturalHeight,
+          sourceFileIndex: page.pageNumber - 1,
+        })),
+      }),
+    });
+
+    if (!response.ok || !response.body) {
+      throw new Error('答案解析匹配请求失败');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const eventText of events) {
+        const dataLine = eventText.split('\n').find((line) => line.startsWith('data:'));
+        if (!dataLine) continue;
+
+        const event = JSON.parse(dataLine.replace(/^data:\s*/, '')) as {
+          type?: string;
+          data?: {
+            message?: string;
+            error?: string;
+            result?: {
+              globalMatches?: Array<{ questionId: number; answer?: string; analysis?: string }>;
+            };
+          };
+        };
+
+        if (event.type === 'progress' && event.data?.message) {
+          setAnswerMatchMessage(event.data.message);
+        }
+
+        if (event.type === 'error') {
+          throw new Error(event.data?.error || '答案解析匹配失败');
+        }
+
+        if (event.type === 'complete') {
+          return (event.data?.result?.globalMatches || []).map((match) => ({
+            ...match,
+            questionId: questionIdByMatchId.get(match.questionId) || '',
+          })).filter((match) => match.questionId);
         }
       }
 
@@ -2658,6 +2884,35 @@ function TabletOcrQuestionReviewPage({
 
     return undefined;
   }, [questions, subject]);
+
+  useEffect(() => {
+    if (!shouldShowAnswerAnalysis || answerMatchStartedRef.current) return undefined;
+    if (recognitionStatus !== 'done' || questions.length === 0) return undefined;
+
+    answerMatchStartedRef.current = true;
+    const questionSnapshot = questions;
+
+    async function matchAnswers() {
+      setAnswerMatchStatus('matching');
+      setAnswerMatchMessage(`正在匹配 ${questionSnapshot.length} 道题的答案解析...`);
+      try {
+        const matches = await requestGlobalAnswerMatches(questionSnapshot);
+        setQuestions((currentQuestions) => currentQuestions.map((question) => {
+          const match = matches.find((item) => item.questionId === question.id);
+          return match ? mergeAnswerToReviewQuestion(question, match.answer || '', match.analysis || '') : question;
+        }));
+        setAnswerMatchStatus('done');
+        setAnswerMatchMessage('');
+      } catch (error) {
+        console.error('[TabletOCR] answer global match failed:', error);
+        setAnswerMatchStatus('failed');
+        setAnswerMatchMessage('答案解析自动匹配失败，可手动关联补充');
+      }
+    }
+
+    void matchAnswers();
+    return undefined;
+  }, [questions, recognitionStatus, shouldShowAnswerAnalysis]);
 
   useEffect(() => {
     if (!cropDrag) return undefined;
@@ -2868,6 +3123,14 @@ function TabletOcrQuestionReviewPage({
     scrollLeftToQuestion(target.questionId);
   };
 
+  const canPlacePrecisionBoxOnPage = (page: MaterialPage) => {
+    if (!manualLinkTarget) return false;
+    if (manualLinkTarget.field === 'content' || manualLinkTarget.field === 'optionContent') {
+      return page.role !== 'answer';
+    }
+    return mode === 'separate_answer' ? page.role === 'answer' : page.role !== 'answer';
+  };
+
   const applyPrecisionRecognitionResult = (target: TabletManualLinkTarget, result: OptionsContentRecognitionResult) => {
     updateQuestion(target.questionId, (currentQuestion) => {
       if (target.subQuestionId) {
@@ -2909,16 +3172,40 @@ function TabletOcrQuestionReviewPage({
     });
   };
 
-  const requestPrecisionRecognition = async (box: RecognitionBox) => {
+  const applyManualAnswerFieldResult = (target: TabletManualLinkTarget, value: string) => {
+    const normalized = value.trim();
+    if (!normalized) return;
+    updateQuestion(target.questionId, (currentQuestion) => {
+      if (target.subQuestionId) {
+        return {
+          ...currentQuestion,
+          subQuestions: currentQuestion.subQuestions.map((subQuestion) => {
+            if (subQuestion.id !== target.subQuestionId) return subQuestion;
+            return target.field === 'answer'
+              ? applyAnswerValue(subQuestion, normalized)
+              : { ...subQuestion, analysis: normalized };
+          }),
+        };
+      }
+
+      return target.field === 'answer'
+        ? applyAnswerValue(currentQuestion, normalized)
+        : { ...currentQuestion, analysis: normalized };
+    });
+  };
+
+  const requestPrecisionRecognition = async (box: RecognitionBox, target: TabletManualLinkTarget) => {
     const page = materialPages.find((currentPage) => currentPage.pageNumber === box.pageNumber);
     if (!page) throw new Error('未找到资料页');
     const cropped = await cropMaterialQuestionImage(page, box);
+    const isAnswerField = target.field === 'answer' || target.field === 'analysis';
 
     const response = await fetch('/api/recognize-questions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contentOnly: true,
+        answerOnly: isAnswerField ? true : undefined,
+        contentOnly: isAnswerField ? undefined : true,
         pages: [{
           pageNumber: 1,
           imageData: cropped.imageData,
@@ -2950,7 +3237,7 @@ function TabletOcrQuestionReviewPage({
           type?: string;
           data?: {
             error?: string;
-            result?: OptionsContentRecognitionResult;
+            result?: AnswerOnlyRecognitionResult | OptionsContentRecognitionResult;
           };
         };
 
@@ -2974,8 +3261,16 @@ function TabletOcrQuestionReviewPage({
 
     setManualLinkProcessingTarget(manualLinkTarget);
     try {
-      const result = await requestPrecisionRecognition(precisionRecognitionBox);
-      applyPrecisionRecognitionResult(manualLinkTarget, result);
+      const result = await requestPrecisionRecognition(precisionRecognitionBox, manualLinkTarget);
+      if (manualLinkTarget.field === 'answer' || manualLinkTarget.field === 'analysis') {
+        const answerResult = result as AnswerOnlyRecognitionResult;
+        applyManualAnswerFieldResult(
+          manualLinkTarget,
+          manualLinkTarget.field === 'answer' ? answerResult.answer || '' : answerResult.analysis || '',
+        );
+      } else {
+        applyPrecisionRecognitionResult(manualLinkTarget, result as OptionsContentRecognitionResult);
+      }
       setPrecisionRecognitionBox(null);
       setManualLinkTarget(null);
     } catch (error) {
@@ -3275,6 +3570,9 @@ function TabletOcrQuestionReviewPage({
           },
           questionType: 'short_answer' as ReviewQuestionType,
           questionTypeStatus: 'pending' as QuestionTypeRecognitionStatus,
+          answer: '',
+          analysis: '',
+          blankAnswers: [''],
           content: '',
           optionContents: {},
           optionCount: 4,
@@ -3332,7 +3630,7 @@ function TabletOcrQuestionReviewPage({
         <div
           className={`relative bg-white ${isReviewAddBoxMode || manualLinkTarget ? 'cursor-crosshair' : ''}`}
           onClick={(event) => {
-            if (manualLinkTarget && page.role !== 'answer') {
+            if (manualLinkTarget && canPlacePrecisionBoxOnPage(page)) {
               event.stopPropagation();
               addPrecisionRecognitionBoxAtPoint(page, event.clientX, event.clientY);
               return;
@@ -3653,6 +3951,7 @@ function TabletOcrQuestionReviewPage({
                         currentSubQuestion.id === subQuestion.id
                           ? {
                               ...currentSubQuestion,
+                              blankAnswers: value === 'fill_blank' ? createBlankAnswers(Math.max(1, currentSubQuestion.blankCount), currentSubQuestion.blankAnswers) : currentSubQuestion.blankAnswers,
                               blankCount: value === 'fill_blank' ? Math.max(1, currentSubQuestion.blankCount) : currentSubQuestion.blankCount,
                               optionContents: isChoiceLikeQuestionType(value)
                                 ? buildOptionContents(value, getDefaultOptionCount(value, currentSubQuestion.optionCount), currentSubQuestion.optionContents || {})
@@ -3764,7 +4063,11 @@ function TabletOcrQuestionReviewPage({
                 updateQuestion(question.id, (currentQuestion) => ({
                   ...currentQuestion,
                   subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
-                    currentSubQuestion.id === subQuestion.id ? { ...currentSubQuestion, blankCount: value } : currentSubQuestion
+                    currentSubQuestion.id === subQuestion.id ? {
+                      ...currentSubQuestion,
+                      blankAnswers: createBlankAnswers(value, currentSubQuestion.blankAnswers),
+                      blankCount: value,
+                    } : currentSubQuestion
                   )),
                 }));
               }}
@@ -3774,6 +4077,223 @@ function TabletOcrQuestionReviewPage({
         ) : null}
       </div>
     );
+  };
+
+  const renderAnswerLabel = (label: '答案' | '解析', target: TabletManualLinkTarget, isMatched: boolean) => (
+    <div className={`mb-[10px] flex items-center gap-[6px] text-[20px] leading-none ${isMatched ? 'text-[#68727d]' : 'text-[#f28b21]'}`}>
+      <span>{isMatched ? label : `${label}未匹配`}</span>
+      {renderManualLinkButton(target, `关联${label}`)}
+    </div>
+  );
+
+  const renderChoiceAnswerButtons = (
+    entity: ReviewQuestion | ReviewQuestion['subQuestions'][number],
+    onChange: (value: string) => void,
+  ) => {
+    const count = entity.questionType === 'judge' ? 2 : entity.optionCount;
+    const selectedLetters = (entity.answer || '').toUpperCase().split('');
+    return (
+      <div className="flex flex-wrap gap-[12px]" onClick={(event) => event.stopPropagation()}>
+        {OPTION_LETTERS.slice(0, count).split('').map((letter) => {
+          const label = entity.questionType === 'judge' ? getDefaultOptionContent(entity.questionType, letter) : letter;
+          const isSelected = selectedLetters.includes(letter);
+          return (
+            <button
+              key={letter}
+              className={`h-[46px] min-w-[46px] rounded-[7px] border px-[14px] text-[22px] font-medium leading-none ${
+                isSelected
+                  ? 'border-[#23bfb2] bg-[#23bfb2] text-white'
+                  : 'border-[#cfd5da] bg-white text-[#5c6166] active:border-[#23bfb2] active:text-[#16a69a]'
+              }`}
+              onClick={() => {
+                if (entity.questionType === 'multiple_choice') {
+                  const nextLetters = isSelected
+                    ? selectedLetters.filter((item) => item !== letter)
+                    : [...selectedLetters, letter].sort((a, b) => OPTION_LETTERS.indexOf(a) - OPTION_LETTERS.indexOf(b));
+                  onChange(nextLetters.join(''));
+                  return;
+                }
+                onChange(isSelected ? '' : letter);
+              }}
+              type="button"
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderAnswerInput = (
+    entity: ReviewQuestion | ReviewQuestion['subQuestions'][number],
+    onChange: (value: string) => void,
+    onBlankChange: (index: number, value: string) => void,
+    isProcessing: boolean,
+  ) => {
+    if (isProcessing) return renderFieldLoading('答案识别中...');
+    if (isChoiceLikeQuestionType(entity.questionType)) {
+      return renderChoiceAnswerButtons(entity, onChange);
+    }
+    if (entity.questionType === 'fill_blank') {
+      return (
+        <div className="space-y-[12px]" onClick={(event) => event.stopPropagation()}>
+          {createBlankAnswers(entity.blankCount, entity.blankAnswers).map((value, index) => (
+            <label key={index} className="flex items-center gap-[12px]">
+              <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full border border-[#b6bec6] text-[20px] leading-none text-[#5c6166]">
+                {index + 1}
+              </span>
+              <input
+                className="h-[46px] flex-1 border-0 border-b border-[#d7dde3] bg-transparent px-[4px] text-[20px] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+                onChange={(event) => onBlankChange(index, event.target.value)}
+                placeholder="请输入答案"
+                value={value}
+              />
+            </label>
+          ))}
+        </div>
+      );
+    }
+    return (
+      <input
+        className="h-[52px] w-full rounded-[6px] border border-[#d7dde3] bg-white px-[16px] text-[20px] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+        onChange={(event) => onChange(event.target.value)}
+        onClick={(event) => event.stopPropagation()}
+        placeholder="请输入答案"
+        value={entity.answer || ''}
+      />
+    );
+  };
+
+  const renderAnalysisInput = (
+    value: string | undefined,
+    onChange: (value: string) => void,
+    isProcessing: boolean,
+  ) => (
+    isProcessing ? renderFieldLoading('解析识别中...') : (
+      <AutoResizeTextarea
+        className="min-h-[58px] w-full resize-none overflow-hidden rounded-[6px] border border-[#d7dde3] bg-white px-[16px] py-[12px] text-[20px] leading-[1.55] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+        onChange={onChange}
+        onClick={(event) => event.stopPropagation()}
+        placeholder="请输入解析"
+        value={value || ''}
+      />
+    )
+  );
+
+  const renderParentAnswerAnalysis = (question: ReviewQuestion, options: { hideAnswer?: boolean; hideAnalysis?: boolean } = {}) => (
+    <div className="mt-[22px] space-y-[18px]">
+      {!options.hideAnswer ? (
+        <div>
+          {renderAnswerLabel('答案', { questionId: question.id, field: 'answer' }, hasQuestionAnswer(question))}
+          {renderAnswerInput(
+            question,
+            (value) => updateQuestion(question.id, (currentQuestion) => applyAnswerValue(currentQuestion, value)),
+            (index, value) => updateQuestion(question.id, (currentQuestion) => {
+              const nextBlankAnswers = createBlankAnswers(currentQuestion.blankCount, currentQuestion.blankAnswers);
+              nextBlankAnswers[index] = value;
+              return { ...currentQuestion, blankAnswers: nextBlankAnswers, answer: nextBlankAnswers.filter(Boolean).join('；') };
+            }),
+            isManualLinkTargetProcessing({ questionId: question.id, field: 'answer' }),
+          )}
+        </div>
+      ) : null}
+      {!options.hideAnalysis ? (
+        <div>
+          {renderAnswerLabel('解析', { questionId: question.id, field: 'analysis' }, isUsableText(question.analysis))}
+          {renderAnalysisInput(
+            question.analysis,
+            (value) => updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, analysis: value })),
+            isManualLinkTargetProcessing({ questionId: question.id, field: 'analysis' }),
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const renderSubQuestionAnswerAnalysis = (
+    question: ReviewQuestion,
+    subQuestion: ReviewQuestion['subQuestions'][number],
+    options: { hideAnalysis?: boolean } = {},
+  ) => (
+    <div className="mt-[16px] space-y-[16px]">
+      <div>
+        {renderAnswerLabel('答案', { questionId: question.id, field: 'answer', subQuestionId: subQuestion.id }, hasQuestionAnswer(subQuestion))}
+        {renderAnswerInput(
+          subQuestion,
+          (value) => updateQuestion(question.id, (currentQuestion) => ({
+            ...currentQuestion,
+            subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+              currentSubQuestion.id === subQuestion.id ? applyAnswerValue(currentSubQuestion, value) : currentSubQuestion
+            )),
+          })),
+          (index, value) => updateQuestion(question.id, (currentQuestion) => ({
+            ...currentQuestion,
+            subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => {
+              if (currentSubQuestion.id !== subQuestion.id) return currentSubQuestion;
+              const nextBlankAnswers = createBlankAnswers(currentSubQuestion.blankCount, currentSubQuestion.blankAnswers);
+              nextBlankAnswers[index] = value;
+              return { ...currentSubQuestion, blankAnswers: nextBlankAnswers, answer: nextBlankAnswers.filter(Boolean).join('；') };
+            }),
+          })),
+          isManualLinkTargetProcessing({ questionId: question.id, field: 'answer', subQuestionId: subQuestion.id }),
+        )}
+      </div>
+      {!options.hideAnalysis ? (
+        <div>
+          {renderAnswerLabel('解析', { questionId: question.id, field: 'analysis', subQuestionId: subQuestion.id }, isUsableText(subQuestion.analysis))}
+          {renderAnalysisInput(
+            subQuestion.analysis,
+            (value) => updateQuestion(question.id, (currentQuestion) => ({
+              ...currentQuestion,
+              subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                currentSubQuestion.id === subQuestion.id ? { ...currentSubQuestion, analysis: value } : currentSubQuestion
+              )),
+            })),
+            isManualLinkTargetProcessing({ questionId: question.id, field: 'analysis', subQuestionId: subQuestion.id }),
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const renderImageModeAnswerAnalysis = (question: ReviewQuestion) => {
+    if (!shouldShowAnswerAnalysis) return null;
+    const isEnglishSubject = subject.includes('英语');
+
+    if (question.questionType === 'material' || (isEnglishSubject && question.questionType === 'reading_comprehension')) {
+      return (
+        <div className="mt-[22px] space-y-[16px]">
+          {question.subQuestions.map((subQuestion, index) => (
+            <div key={subQuestion.id} className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
+              <div className="mb-[12px] flex items-center gap-[12px]">
+                <span className="text-[22px] font-semibold leading-none text-[#202124]">（{index + 1}）</span>
+                <span className="inline-flex h-[34px] items-center rounded-[6px] bg-[#eceff1] px-[14px] text-[18px] leading-none text-[#5c6166]">
+                  {getReviewQuestionTypeLabel(subQuestion.questionType).replace('题', '')}
+                </span>
+              </div>
+              {renderSubQuestionAnswerAnalysis(question, subQuestion)}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    if (isEnglishSubject && question.questionType === 'cloze') {
+      return (
+        <div className="mt-[22px] space-y-[16px]">
+          {question.subQuestions.map((subQuestion, index) => (
+            <div key={subQuestion.id} className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
+              <div className="mb-[12px] text-[22px] font-semibold leading-none text-[#202124]">（{index + 1}）</div>
+              {renderSubQuestionAnswerAnalysis(question, subQuestion, { hideAnalysis: true })}
+            </div>
+          ))}
+          {renderParentAnswerAnalysis(question, { hideAnswer: true })}
+        </div>
+      );
+    }
+
+    return renderParentAnswerAnalysis(question);
   };
 
   const renderRecognitionContent = (question: ReviewQuestion) => {
@@ -3827,7 +4347,11 @@ function TabletOcrQuestionReviewPage({
 
         {question.questionType === 'fill_blank' ? (
           <div onClick={(event) => event.stopPropagation()}>
-            <CountStepper label="空数" onChange={(value) => updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, blankCount: value }))} value={question.blankCount} />
+            <CountStepper label="空数" onChange={(value) => updateQuestion(question.id, (currentQuestion) => ({
+              ...currentQuestion,
+              blankAnswers: createBlankAnswers(value, currentQuestion.blankAnswers),
+              blankCount: value,
+            }))} value={question.blankCount} />
           </div>
         ) : null}
 
@@ -3939,6 +4463,7 @@ function TabletOcrQuestionReviewPage({
             onChange={(value) => {
               updateQuestion(question.id, (currentQuestion) => ({
                 ...currentQuestion,
+                blankAnswers: value === 'fill_blank' ? createBlankAnswers(currentQuestion.blankCount, currentQuestion.blankAnswers) : currentQuestion.blankAnswers,
                 blankCount: value === 'cloze' ? Math.max(1, currentQuestion.blankCount) : currentQuestion.blankCount,
                 content: currentQuestion.content || '',
                 optionContents: isChoiceLikeQuestionType(value)
@@ -3948,7 +4473,7 @@ function TabletOcrQuestionReviewPage({
                 questionType: value,
                 questionTypeStatus: 'manual',
                 subQuestions: value === 'material' && currentQuestion.subQuestions.length === 0
-                  ? [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'short_answer', content: '', optionContents: {}, optionCount: 4, blankCount: 1 }]
+                  ? [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'short_answer', answer: '', analysis: '', blankAnswers: [''], content: '', optionContents: {}, optionCount: 4, blankCount: 1 }]
                   : value === 'reading_comprehension'
                     ? (currentQuestion.subQuestions.length > 0
                         ? currentQuestion.subQuestions.map((subQuestion) => ({
@@ -3957,7 +4482,7 @@ function TabletOcrQuestionReviewPage({
                             optionCount: Math.max(4, subQuestion.optionCount),
                             questionType: 'single_choice' as ReviewQuestionType,
                           }))
-                        : [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'single_choice', content: '', optionContents: buildOptionContents('single_choice', 4), optionCount: 4, blankCount: 1 }])
+                        : [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'single_choice', answer: '', analysis: '', blankAnswers: [''], content: '', optionContents: buildOptionContents('single_choice', 4), optionCount: 4, blankCount: 1 }])
                     : value === 'cloze'
                       ? buildSubQuestionsFromContent(currentQuestion.id, 'cloze', currentQuestion.content, currentQuestion.blankCount)
                       : currentQuestion.subQuestions,
@@ -4078,7 +4603,10 @@ function TabletOcrQuestionReviewPage({
                     ...currentQuestion.subQuestions,
                     {
                       id: `${currentQuestion.id}-sub-${Date.now()}`,
+                      answer: '',
+                      analysis: '',
                       blankCount: getDefaultBlankCount(questionType),
+                      blankAnswers: createBlankAnswers(getDefaultBlankCount(questionType)),
                       content: '',
                       optionContents: isChoiceLikeQuestionType(questionType) ? buildOptionContents(questionType, getDefaultOptionCount(questionType)) : {},
                       optionCount: getDefaultOptionCount(questionType),
@@ -4088,7 +4616,11 @@ function TabletOcrQuestionReviewPage({
                 }));
               }}
               onBlankCountChange={(value) => {
-                updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, blankCount: value }));
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  blankAnswers: createBlankAnswers(value, currentQuestion.blankAnswers),
+                  blankCount: value,
+                }));
               }}
               onDeleteSubQuestion={(subQuestionId) => {
                 updateQuestion(question.id, (currentQuestion) => ({
@@ -4100,13 +4632,27 @@ function TabletOcrQuestionReviewPage({
                 updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, optionCount: value }));
               }}
               onSetClozeSubQuestionCount={(value) => {
-                updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, blankCount: value }));
+                updateQuestion(question.id, (currentQuestion) => {
+                  const nextSubQuestions = [...currentQuestion.subQuestions];
+                  if (value > nextSubQuestions.length) {
+                    for (let index = nextSubQuestions.length; index < value; index += 1) {
+                      nextSubQuestions.push(createReviewSubQuestion(currentQuestion.id, index, 'single_choice', { optionCount: currentQuestion.optionCount }));
+                    }
+                  } else {
+                    nextSubQuestions.splice(value);
+                  }
+                  return { ...currentQuestion, blankCount: value, subQuestions: nextSubQuestions };
+                });
               }}
               onSubQuestionBlankCountChange={(subQuestionId, value) => {
                 updateQuestion(question.id, (currentQuestion) => ({
                   ...currentQuestion,
                   subQuestions: currentQuestion.subQuestions.map((subQuestion) => (
-                    subQuestion.id === subQuestionId ? { ...subQuestion, blankCount: value } : subQuestion
+                    subQuestion.id === subQuestionId ? {
+                      ...subQuestion,
+                      blankAnswers: createBlankAnswers(value, subQuestion.blankAnswers),
+                      blankCount: value,
+                    } : subQuestion
                   )),
                 }));
               }}
@@ -4125,6 +4671,7 @@ function TabletOcrQuestionReviewPage({
                     subQuestion.id === subQuestionId
                       ? {
                           ...subQuestion,
+                          blankAnswers: value === 'fill_blank' ? createBlankAnswers(Math.max(1, subQuestion.blankCount), subQuestion.blankAnswers) : subQuestion.blankAnswers,
                           blankCount: value === 'fill_blank' ? Math.max(1, subQuestion.blankCount) : subQuestion.blankCount,
                           optionContents: isChoiceLikeQuestionType(value) ? buildOptionContents(value, getDefaultOptionCount(value, subQuestion.optionCount), subQuestion.optionContents || {}) : {},
                           optionCount: value === 'multiple_choice' ? Math.max(4, subQuestion.optionCount) : subQuestion.optionCount,
@@ -4137,6 +4684,7 @@ function TabletOcrQuestionReviewPage({
               question={question}
               subject={subject}
             />
+            {renderImageModeAnswerAnalysis(question)}
           </div>
           ) : null}
         </div>
@@ -4180,7 +4728,10 @@ function TabletOcrQuestionReviewPage({
   };
 
   const selectedPendingBoxCount = reviewBoxes.filter((box) => box.selected && pendingReviewBoxIds.has(box.id)).length;
-  const shouldShowRecognitionBar = recognitionStatus === 'recognizing';
+  const shouldShowRecognitionBar = recognitionStatus === 'recognizing' || answerMatchStatus === 'matching';
+  const reviewStatusMessage = answerMatchStatus === 'matching'
+    ? (answerMatchMessage || '正在匹配答案解析...')
+    : (recognitionMessage || '正在智能识别中...');
 
   return (
     <div className="absolute inset-0 z-30 bg-[#eef2f5]">
@@ -4291,7 +4842,7 @@ function TabletOcrQuestionReviewPage({
           {shouldShowRecognitionBar ? (
             <div className="absolute left-[28px] right-[28px] top-[82px] z-10 flex h-[48px] items-center gap-[12px] rounded-[8px] bg-[#e8f3ff] px-[18px] text-[20px] font-medium leading-none text-[#2478d4] shadow-sm">
               <div className="h-[24px] w-[24px] animate-spin rounded-full border-[3px] border-[#bddcff] border-t-[#2478d4]" />
-              {recognitionMessage || '正在智能识别中...'}
+              {reviewStatusMessage}
             </div>
           ) : null}
           <div className={`absolute bottom-0 left-[28px] right-[28px] overflow-y-auto pb-[36px] ${shouldShowRecognitionBar ? 'top-[148px]' : 'top-[90px]'}`}>
@@ -4627,6 +5178,7 @@ function TabletOcrContentSelectionPage({
       <TabletOcrQuestionReviewPage
         boxes={boxes}
         materialPages={materialPages}
+        mode={mode || 'questions_only'}
         onBackToSelection={() => setHasStarted(false)}
         onExit={onBack}
         subject={subject}
