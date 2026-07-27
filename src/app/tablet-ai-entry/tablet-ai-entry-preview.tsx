@@ -2410,6 +2410,7 @@ function CroppedQuestionImage({
 }
 
 function AnswerConfigPanel({
+  answerMode = false,
   onAddSubQuestion,
   onBlankCountChange,
   onDeleteSubQuestion,
@@ -2421,6 +2422,7 @@ function AnswerConfigPanel({
   question,
   subject,
 }: {
+  answerMode?: boolean;
   onAddSubQuestion: (questionType: ReviewQuestionType) => void;
   onBlankCountChange: (value: number) => void;
   onDeleteSubQuestion: (subQuestionId: string) => void;
@@ -2512,6 +2514,7 @@ function AnswerConfigPanel({
             </>
           )}
         </div>
+        {answerMode ? null : (
         <div className="grid justify-start gap-[16px]">
           {question.subQuestions.map((subQuestion, index) => (
             <div key={subQuestion.id} className="inline-flex min-h-[54px] w-fit items-center rounded-[7px] bg-[#f3f4f5] px-[16px] py-[7px]">
@@ -2569,11 +2572,12 @@ function AnswerConfigPanel({
             </div>
           ))}
         </div>
+        )}
       </div>
     );
   }
 
-  return <div className="text-[18px] leading-none text-[#9aa3ad]">问答题无需设置作答项</div>;
+  return null;
 }
 
 function TabletOcrQuestionReviewPage({
@@ -4257,6 +4261,80 @@ function TabletOcrQuestionReviewPage({
     </div>
   );
 
+  const updateImageModeSubQuestionType = (questionId: string, subQuestionId: string, value: ReviewQuestionType) => {
+    updateQuestion(questionId, (currentQuestion) => ({
+      ...currentQuestion,
+      subQuestions: currentQuestion.subQuestions.map((subQuestion) => (
+        subQuestion.id === subQuestionId
+          ? {
+              ...subQuestion,
+              blankAnswers: value === 'fill_blank' ? createBlankAnswers(Math.max(1, subQuestion.blankCount), subQuestion.blankAnswers) : subQuestion.blankAnswers,
+              blankCount: value === 'fill_blank' ? Math.max(1, subQuestion.blankCount) : subQuestion.blankCount,
+              optionContents: isChoiceLikeQuestionType(value) ? buildOptionContents(value, getDefaultOptionCount(value, subQuestion.optionCount), subQuestion.optionContents || {}) : {},
+              optionCount: getDefaultOptionCount(value, subQuestion.optionCount),
+              questionType: value,
+            }
+          : subQuestion
+      )),
+    }));
+  };
+
+  const deleteImageModeSubQuestion = (questionId: string, subQuestionId: string) => {
+    updateQuestion(questionId, (currentQuestion) => ({
+      ...currentQuestion,
+      blankCount: currentQuestion.questionType === 'cloze'
+        ? Math.max(1, currentQuestion.subQuestions.length - 1)
+        : currentQuestion.blankCount,
+      subQuestions: currentQuestion.subQuestions.filter((subQuestion) => subQuestion.id !== subQuestionId),
+    }));
+  };
+
+  const renderImageModeSubQuestionHeader = (
+    question: ReviewQuestion,
+    subQuestion: ReviewQuestion['subQuestions'][number],
+    index: number,
+    options: { fixedSingleChoice?: boolean } = {},
+  ) => (
+    <div className="mb-[12px] flex items-center justify-between gap-[12px]">
+      <div className="flex items-center gap-[12px]">
+        <span className="text-[22px] font-semibold leading-none text-[#202124]">（{index + 1}）</span>
+        {options.fixedSingleChoice ? (
+          <span className="inline-flex h-[34px] items-center rounded-[6px] bg-[#eceff1] px-[14px] text-[18px] leading-none text-[#5c6166]">
+            单选
+          </span>
+        ) : (
+          <label className="relative inline-flex h-[34px] min-w-[104px] items-center rounded-[6px] bg-[#eceff1] pl-[14px] pr-[36px] text-[18px] leading-none text-[#5c6166]">
+            <select
+              aria-label="子题题型"
+              className="absolute inset-0 cursor-pointer opacity-0"
+              onChange={(event) => updateImageModeSubQuestionType(question.id, subQuestion.id, event.target.value as ReviewQuestionType)}
+              value={subQuestion.questionType}
+            >
+              {reviewQuestionTypeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label.replace('题', '')}
+                </option>
+              ))}
+            </select>
+            <span>{getReviewQuestionTypeLabel(subQuestion.questionType).replace('题', '')}</span>
+            <ChevronDown className="absolute right-[10px] top-1/2 h-[22px] w-[22px] -translate-y-1/2 stroke-[2.4] text-[#555b61]" />
+          </label>
+        )}
+      </div>
+      <button
+        aria-label="删除子题"
+        className="flex h-[38px] w-[38px] items-center justify-center rounded-full text-[#7b8085] active:bg-[#eceff1] active:text-[#d84a4a]"
+        onClick={(event) => {
+          event.stopPropagation();
+          deleteImageModeSubQuestion(question.id, subQuestion.id);
+        }}
+        type="button"
+      >
+        <Trash2 className="h-[20px] w-[20px]" />
+      </button>
+    </div>
+  );
+
   const renderImageModeAnswerAnalysis = (question: ReviewQuestion) => {
     if (!shouldShowAnswerAnalysis) return null;
     const isEnglishSubject = subject.includes('英语');
@@ -4266,12 +4344,7 @@ function TabletOcrQuestionReviewPage({
         <div className="mt-[22px] space-y-[16px]">
           {question.subQuestions.map((subQuestion, index) => (
             <div key={subQuestion.id} className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
-              <div className="mb-[12px] flex items-center gap-[12px]">
-                <span className="text-[22px] font-semibold leading-none text-[#202124]">（{index + 1}）</span>
-                <span className="inline-flex h-[34px] items-center rounded-[6px] bg-[#eceff1] px-[14px] text-[18px] leading-none text-[#5c6166]">
-                  {getReviewQuestionTypeLabel(subQuestion.questionType).replace('题', '')}
-                </span>
-              </div>
+              {renderImageModeSubQuestionHeader(question, subQuestion, index, { fixedSingleChoice: isEnglishSubject && question.questionType === 'reading_comprehension' })}
               {renderSubQuestionAnswerAnalysis(question, subQuestion)}
             </div>
           ))}
@@ -4284,7 +4357,7 @@ function TabletOcrQuestionReviewPage({
         <div className="mt-[22px] space-y-[16px]">
           {question.subQuestions.map((subQuestion, index) => (
             <div key={subQuestion.id} className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
-              <div className="mb-[12px] text-[22px] font-semibold leading-none text-[#202124]">（{index + 1}）</div>
+              {renderImageModeSubQuestionHeader(question, subQuestion, index, { fixedSingleChoice: true })}
               {renderSubQuestionAnswerAnalysis(question, subQuestion, { hideAnalysis: true })}
             </div>
           ))}
@@ -4596,6 +4669,7 @@ function TabletOcrQuestionReviewPage({
           {question.viewMode === 'image' ? (
           <div className="mt-[18px]">
             <AnswerConfigPanel
+              answerMode={shouldShowAnswerAnalysis}
               onAddSubQuestion={(questionType) => {
                 updateQuestion(question.id, (currentQuestion) => ({
                   ...currentQuestion,
