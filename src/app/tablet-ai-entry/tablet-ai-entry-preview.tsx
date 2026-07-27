@@ -352,18 +352,17 @@ function applyAnswerValue<T extends {
   questionType: ReviewQuestionType;
 }>(entity: T, value: string): T {
   const normalized = value.trim();
-  if (!normalized) return entity;
   if (entity.questionType === 'fill_blank') {
     return {
       ...entity,
       answer: normalized,
-      blankAnswers: splitAnswerToBlanks(normalized, entity.blankCount),
+      blankAnswers: normalized ? splitAnswerToBlanks(normalized, entity.blankCount) : createBlankAnswers(entity.blankCount),
     };
   }
   if (isChoiceLikeQuestionType(entity.questionType)) {
     return {
       ...entity,
-      answer: normalizeChoiceAnswer(entity.questionType, normalized),
+      answer: normalized ? normalizeChoiceAnswer(entity.questionType, normalized) : '',
     };
   }
   return { ...entity, answer: normalized };
