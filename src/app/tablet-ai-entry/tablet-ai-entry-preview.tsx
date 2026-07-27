@@ -4217,9 +4217,48 @@ function TabletOcrQuestionReviewPage({
   const renderSubQuestionAnswerAnalysis = (
     question: ReviewQuestion,
     subQuestion: ReviewQuestion['subQuestions'][number],
-    options: { hideAnalysis?: boolean } = {},
+    options: { hideAnalysis?: boolean; hideAnswerConfig?: boolean } = {},
   ) => (
     <div className="mt-[16px] space-y-[16px]">
+      {!options.hideAnswerConfig && (subQuestion.questionType === 'single_choice' || subQuestion.questionType === 'multiple_choice') ? (
+        <div onClick={(event) => event.stopPropagation()}>
+          <CountStepper
+            label="选项数"
+            onChange={(value) => updateQuestion(question.id, (currentQuestion) => ({
+              ...currentQuestion,
+              subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                currentSubQuestion.id === subQuestion.id ? {
+                  ...currentSubQuestion,
+                  optionContents: buildOptionContents(currentSubQuestion.questionType, value, currentSubQuestion.optionContents || {}),
+                  optionCount: value,
+                } : currentSubQuestion
+              )),
+            }))}
+            value={subQuestion.optionCount}
+          />
+        </div>
+      ) : null}
+      {!options.hideAnswerConfig && subQuestion.questionType === 'fill_blank' ? (
+        <div onClick={(event) => event.stopPropagation()}>
+          <CountStepper
+            label="空数"
+            onChange={(value) => updateQuestion(question.id, (currentQuestion) => ({
+              ...currentQuestion,
+              subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => {
+                if (currentSubQuestion.id !== subQuestion.id) return currentSubQuestion;
+                const nextBlankAnswers = createBlankAnswers(value, currentSubQuestion.blankAnswers);
+                return {
+                  ...currentSubQuestion,
+                  answer: nextBlankAnswers.filter(Boolean).join('；'),
+                  blankAnswers: nextBlankAnswers,
+                  blankCount: value,
+                };
+              }),
+            }))}
+            value={subQuestion.blankCount}
+          />
+        </div>
+      ) : null}
       <div>
         {renderAnswerLabel('答案', { questionId: question.id, field: 'answer', subQuestionId: subQuestion.id }, hasQuestionAnswer(subQuestion))}
         {renderAnswerInput(
@@ -4357,7 +4396,7 @@ function TabletOcrQuestionReviewPage({
           {question.subQuestions.map((subQuestion, index) => (
             <div key={subQuestion.id} className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
               {renderImageModeSubQuestionHeader(question, subQuestion, index, { fixedSingleChoice: true })}
-              {renderSubQuestionAnswerAnalysis(question, subQuestion, { hideAnalysis: true })}
+              {renderSubQuestionAnswerAnalysis(question, subQuestion, { hideAnalysis: true, hideAnswerConfig: true })}
             </div>
           ))}
           {renderParentAnswerAnalysis(question, { hideAnswer: true })}
