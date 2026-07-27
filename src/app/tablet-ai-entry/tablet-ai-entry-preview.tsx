@@ -5355,6 +5355,11 @@ function TabletOcrContentSelectionPage({
     setIsAddBoxMode((currentMode) => !currentMode);
   };
 
+  const handleAddBoxModeTipConfirm = () => {
+    setShowAddBoxModeTip(false);
+    setIsAddBoxMode(true);
+  };
+
   const handleConfirmAction = () => {
     const action = confirmAction;
     setConfirmAction(null);
@@ -5649,7 +5654,7 @@ function TabletOcrContentSelectionPage({
         onConfirm={handleConfirmAction}
       />
       {showAddBoxModeTip ? (
-        <AddBoxModeTipDialog onConfirm={() => setShowAddBoxModeTip(false)} />
+        <AddBoxModeTipDialog onConfirm={handleAddBoxModeTipConfirm} />
       ) : null}
     </div>
   );
