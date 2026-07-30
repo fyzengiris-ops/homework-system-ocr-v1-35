@@ -1898,7 +1898,6 @@ function CaptureSimulator({
         <div className="absolute left-[-120px] top-[730px] h-[580px] w-[980px] rotate-[-12deg] rounded-[120px] bg-[#5b2d2d]/55 blur-[4px]" />
         <div className="absolute left-[710px] top-[-70px] h-[260px] w-[360px] rotate-[16deg] rounded-[22px] bg-[#267fcc]/45 blur-[1px]" />
         <CameraGrid />
-        <div className="absolute left-[360px] top-[210px] h-[690px] w-[930px] rotate-[-12deg] rounded-[6px] border-[4px] border-[#55d99d] bg-white/8" />
         {pendingCaptureBox ? (
           <div
             className="absolute touch-none border-[4px] border-[#58cf9a] bg-[#ddf8f4]/20 shadow-[0_0_0_3px_rgba(88,207,154,0.20)]"
