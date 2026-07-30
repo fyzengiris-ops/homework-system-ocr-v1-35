@@ -50,6 +50,7 @@ type SubjectMode = 'single' | 'multiple';
 type OcrDetectStatus = 'loading' | 'ready' | 'failed';
 type CaptureCloseTarget = 'mode' | 'content' | 'upload' | null;
 type ReviewDisplayMode = 'recognition' | 'image';
+type JoinPaperMode = 'by_type' | 'by_order';
 type ReviewQuestionType =
   | 'single_choice'
   | 'multiple_choice'
@@ -97,6 +98,16 @@ type RecognitionBox = {
 
 type TabletConfirmAction = 'replace' | 'clear' | null;
 type CropRegion = { x: number; y: number; width: number; height: number };
+type DrawingBoxDraft = {
+  pageNumber: number;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  clientX: number;
+  clientY: number;
+  intent: 'manual' | 'precision';
+};
 type OptionsContentRecognitionResult = {
   hasOptions: boolean;
   options: Array<{ label: string; content: string }>;
@@ -133,6 +144,7 @@ type ReviewQuestion = {
     blankAnswers: string[];
     content?: string;
     optionContents?: Record<string, string>;
+    optionAnalyses?: Record<string, string>;
     optionCount: number;
     blankCount: number;
   }>;
@@ -161,6 +173,7 @@ type ReviewAiMatchedQuestion = {
     blankAnswers?: string[];
     content?: string;
     optionContents?: Record<string, string>;
+    optionAnalyses?: Record<string, string>;
     optionCount?: number;
     blankCount?: number;
   }>;
@@ -256,8 +269,32 @@ function isChoiceLikeQuestionType(questionType: ReviewQuestionType) {
   return questionType === 'single_choice' || questionType === 'multiple_choice' || questionType === 'judge';
 }
 
-function isCompoundReviewQuestionType(questionType: ReviewQuestionType) {
-  return questionType === 'material' || questionType === 'reading_comprehension' || questionType === 'cloze';
+function isCompoundReviewQuestionType(questionType: ReviewQuestionType, subject = '') {
+  const englishCompoundTypes: ReviewQuestionType[] = [
+    'material',
+    'reading_comprehension',
+    'translation',
+    'listening',
+    'error_correction',
+    'short_fill',
+  ];
+  const generalCompoundTypes: ReviewQuestionType[] = [
+    'solution',
+    'calculation',
+    'proof',
+    'application',
+    'material',
+  ];
+  if (!subject) {
+    return [...englishCompoundTypes, ...generalCompoundTypes, 'cloze'].includes(questionType);
+  }
+  return isEnglishSubjectName(subject)
+    ? englishCompoundTypes.includes(questionType)
+    : generalCompoundTypes.includes(questionType);
+}
+
+function canAddReviewSubQuestions(questionType: ReviewQuestionType, subject = '') {
+  return isCompoundReviewQuestionType(questionType, subject) || questionType === 'cloze';
 }
 
 function inferReviewSubQuestionTypeFromContent(content: string): ReviewQuestionType {
@@ -265,6 +302,26 @@ function inferReviewSubQuestionTypeFromContent(content: string): ReviewQuestionT
   if (/_{2,}|____|\(\s*\)|（\s*）|填空/.test(content)) return 'fill_blank';
   if (/判断|对错|正确|错误|√|×/.test(content)) return 'judge';
   return 'short_answer';
+}
+
+type InlineBlankToken = { start: number; end: number };
+
+function getInlineBlankTokens(content: string | undefined) {
+  const normalized = (content || '').replace(/\r\n/g, '\n');
+  const blankPattern = /_{2,}|（\s*）|\(\s*\)/g;
+  const tokens: InlineBlankToken[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = blankPattern.exec(normalized)) !== null) {
+    tokens.push({ start: match.index, end: match.index + match[0].length });
+  }
+
+  return tokens;
+}
+
+function countInlineBlanks(content: string | undefined) {
+  const matches = getInlineBlankTokens(content);
+  return Math.max(1, matches.length || 1);
 }
 
 function getDefaultOptionContent(questionType: ReviewQuestionType, letter: string) {
@@ -288,6 +345,46 @@ function buildOptionContents(
 
 function createBlankAnswers(count: number, current: string[] = []) {
   return Array.from({ length: Math.max(1, count || 1) }, (_, index) => current[index] || '');
+}
+
+function syncBlankAnswersByInsertedToken(
+  previousContent: string | undefined,
+  nextContent: string,
+  current: string[] = [],
+  insertStart: number,
+) {
+  const previousTokens = getInlineBlankTokens(previousContent);
+  const nextTokens = getInlineBlankTokens(nextContent);
+  const nextCount = Math.max(1, nextTokens.length || 1);
+
+  if (nextTokens.length <= previousTokens.length) {
+    return createBlankAnswers(nextCount, current);
+  }
+
+  const insertedIndex = nextTokens.findIndex((token) => token.start >= insertStart);
+  const nextAnswers = [...current];
+  nextAnswers.splice(insertedIndex >= 0 ? insertedIndex : nextTokens.length - 1, 0, '');
+  return createBlankAnswers(nextCount, nextAnswers);
+}
+
+function getPointerPercent(rect: DOMRect, clientX: number, clientY: number) {
+  return {
+    x: clampPercent(((clientX - rect.left) / rect.width) * 100, 0, 100),
+    y: clampPercent(((clientY - rect.top) / rect.height) * 100, 0, 100),
+  };
+}
+
+function getBoxFromDrawingDraft(draft: DrawingBoxDraft) {
+  const x = Math.min(draft.startX, draft.currentX);
+  const y = Math.min(draft.startY, draft.currentY);
+  const width = Math.abs(draft.currentX - draft.startX);
+  const height = Math.abs(draft.currentY - draft.startY);
+  return {
+    height: clampPercent(height, 0, 100 - y),
+    width: clampPercent(width, 0, 100 - x),
+    x: clampPercent(x, 0, 100),
+    y: clampPercent(y, 0, 100),
+  };
 }
 
 function formatRecognizedReviewContent(text: string | undefined) {
@@ -463,6 +560,7 @@ function createReviewSubQuestion(
     blankAnswers?: string[];
     content?: string;
     optionContents?: Record<string, string>;
+    optionAnalyses?: Record<string, string>;
     optionCount?: number | null;
     blankCount?: number | null;
   },
@@ -480,6 +578,7 @@ function createReviewSubQuestion(
     optionContents: isChoiceLikeQuestionType(questionType)
       ? buildOptionContents(questionType, optionCount, source?.optionContents || choiceStructure?.optionContents || {})
       : undefined,
+    optionAnalyses: source?.optionAnalyses || {},
     optionCount,
     questionType,
   };
@@ -1163,21 +1262,15 @@ function RecognitionModeDialog({
           type="button"
         >
           <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
-          <span className="text-[30px] font-normal leading-none">识别作业资料</span>
+          <span className="text-[30px] font-normal leading-none">选择识别方式</span>
+          <span className="text-[21px] font-normal leading-none text-[#7b838c]">
+            （根据资料内容选择识别方式）
+          </span>
         </button>
       </header>
 
       <main className="absolute left-0 top-[96px] h-[1002px] w-full">
-        <div className="absolute left-0 top-[50px] w-full text-center">
-          <h2 className="text-[34px] font-medium leading-none text-[#1f2933]">
-            选择识别方式
-          </h2>
-          <p className="mt-[18px] text-[22px] leading-none text-[#6b7280]">
-            建议根据您的资料内容，选择合适的处理流程
-          </p>
-        </div>
-
-        <div className="absolute left-[44px] top-[190px] grid w-[1832px] grid-cols-3 gap-[24px]">
+        <div className="absolute left-[44px] top-[86px] grid w-[1832px] grid-cols-3 gap-[24px]">
           {recognitionModes.map((mode) => {
             const iconColor =
               mode.id === 'questions_only'
@@ -1263,9 +1356,10 @@ function SourceCard({
   );
 }
 
-function createMockCapture(role: ImageRole | undefined, index: number): SelectedImage {
+function createMockCapture(role: ImageRole | undefined, index: number, crop?: CropRegion): SelectedImage {
   const roleText = role === 'question' ? '题目图片' : role === 'answer' ? '答案图片' : '作业图片';
   const accent = role === 'answer' ? '#6f94f7' : '#58cf9a';
+  const cropText = crop ? `裁剪 ${Math.round(crop.width)}×${Math.round(crop.height)}` : '';
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="320" height="220" viewBox="0 0 320 220">
       <rect width="320" height="220" rx="18" fill="#f7fafc"/>
@@ -1275,6 +1369,7 @@ function createMockCapture(role: ImageRole | undefined, index: number): Selected
       <rect x="54" y="122" width="170" height="12" rx="6" fill="#c7d7ff"/>
       <rect x="54" y="148" width="198" height="12" rx="6" fill="#c7d7ff"/>
       <text x="66" y="73" fill="#ffffff" font-size="16" font-family="Arial, sans-serif">${roleText}${index}</text>
+      ${cropText ? `<text x="190" y="73" fill="${accent}" font-size="13" font-family="Arial, sans-serif">${cropText}</text>` : ''}
     </svg>
   `;
 
@@ -1717,7 +1812,7 @@ function CaptureSimulator({
   primaryText: string;
   primaryDisabled: boolean;
   onAlbumSelected: (files: File[]) => void;
-  onCapture: () => void;
+  onCapture: (crop?: CropRegion) => void;
   onClose: () => void;
   onDeleteImage: (image: SelectedImage, role?: ImageRole) => void;
   onMoveImage: (image: SelectedImage, fromRole: ImageRole, toRole: ImageRole) => void;
@@ -1726,10 +1821,60 @@ function CaptureSimulator({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isManagerOpen, setIsManagerOpen] = useState(false);
+  const [pendingCaptureBox, setPendingCaptureBox] = useState<CropRegion | null>(null);
+  const [captureBoxDrag, setCaptureBoxDrag] = useState<{
+    action: 'move' | 'resize';
+    startClientX: number;
+    startClientY: number;
+    startBox: CropRegion;
+  } | null>(null);
   const latestImage = currentImages[currentImages.length - 1];
   const managerImageCount = mode === 'separate_answer'
     ? questionImages.length + answerImages.length
     : selectedImages.length;
+  const captureFrame = { height: 690, left: 360, top: 210, width: 930 };
+
+  useEffect(() => {
+    if (!captureBoxDrag) return undefined;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dx = ((event.clientX - captureBoxDrag.startClientX) / captureFrame.width) * 100;
+      const dy = ((event.clientY - captureBoxDrag.startClientY) / captureFrame.height) * 100;
+      setPendingCaptureBox((currentBox) => {
+        if (!currentBox) return currentBox;
+        if (captureBoxDrag.action === 'move') {
+          return {
+            ...currentBox,
+            x: clampPercent(captureBoxDrag.startBox.x + dx, 0, 100 - captureBoxDrag.startBox.width),
+            y: clampPercent(captureBoxDrag.startBox.y + dy, 0, 100 - captureBoxDrag.startBox.height),
+          };
+        }
+        return {
+          ...currentBox,
+          height: clampPercent(captureBoxDrag.startBox.height + dy, 8, 100 - captureBoxDrag.startBox.y),
+          width: clampPercent(captureBoxDrag.startBox.width + dx, 10, 100 - captureBoxDrag.startBox.x),
+        };
+      });
+    };
+
+    const handlePointerUp = () => setCaptureBoxDrag(null);
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [captureBoxDrag]);
+
+  const handleCaptureButtonClick = () => {
+    if (!pendingCaptureBox) {
+      setPendingCaptureBox({ x: 14, y: 16, width: 72, height: 44 });
+      return;
+    }
+    onCapture(pendingCaptureBox);
+    setPendingCaptureBox(null);
+  };
 
   return (
     <div className="absolute inset-0 z-40 overflow-hidden bg-[#101010]">
@@ -1754,6 +1899,47 @@ function CaptureSimulator({
         <div className="absolute left-[710px] top-[-70px] h-[260px] w-[360px] rotate-[16deg] rounded-[22px] bg-[#267fcc]/45 blur-[1px]" />
         <CameraGrid />
         <div className="absolute left-[360px] top-[210px] h-[690px] w-[930px] rotate-[-12deg] rounded-[6px] border-[4px] border-[#55d99d] bg-white/8" />
+        {pendingCaptureBox ? (
+          <div
+            className="absolute touch-none border-[4px] border-[#58cf9a] bg-[#ddf8f4]/20 shadow-[0_0_0_3px_rgba(88,207,154,0.20)]"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+              setCaptureBoxDrag({
+                action: 'move',
+                startBox: pendingCaptureBox,
+                startClientX: event.clientX,
+                startClientY: event.clientY,
+              });
+            }}
+            style={{
+              height: `${(pendingCaptureBox.height / 100) * captureFrame.height}px`,
+              left: `${captureFrame.left + (pendingCaptureBox.x / 100) * captureFrame.width}px`,
+              top: `${captureFrame.top + (pendingCaptureBox.y / 100) * captureFrame.height}px`,
+              transform: 'rotate(-12deg)',
+              transformOrigin: 'left top',
+              width: `${(pendingCaptureBox.width / 100) * captureFrame.width}px`,
+            }}
+          >
+            <button
+              aria-label="调整拍照裁剪框大小"
+              className="absolute bottom-[-13px] right-[-13px] h-[26px] w-[26px] rounded-full border-[3px] border-white bg-[#58cf9a] shadow-[0_3px_10px_rgba(0,0,0,0.24)]"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+                setCaptureBoxDrag({
+                  action: 'resize',
+                  startBox: pendingCaptureBox,
+                  startClientX: event.clientX,
+                  startClientY: event.clientY,
+                });
+              }}
+              type="button"
+            />
+          </div>
+        ) : null}
         <div className="absolute left-1/2 top-[536px] -translate-x-1/2 rounded-[12px] bg-black/40 px-[34px] py-[17px] text-[28px] font-medium leading-none text-white/90">
           {currentRole
             ? `拍摄${currentRole === 'question' ? '题目' : '答案'}`
@@ -1811,16 +1997,20 @@ function CaptureSimulator({
         </button>
 
         <button
-          aria-label="拍照"
-          className="absolute left-[23px] top-[538px] h-[90px] w-[90px] rounded-full border-[8px] border-white/45 bg-white shadow-[0_0_0_2px_rgba(255,255,255,0.75)] active:scale-95"
-          onClick={onCapture}
+          aria-label={pendingCaptureBox ? '确认拍照裁剪' : '拍照'}
+          className={`absolute left-[23px] top-[538px] flex h-[90px] w-[90px] items-center justify-center rounded-full border-[8px] border-white/45 shadow-[0_0_0_2px_rgba(255,255,255,0.75)] active:scale-95 ${
+            pendingCaptureBox ? 'bg-[#58cf9a] text-white' : 'bg-white text-[#202124]'
+          }`}
+          onClick={handleCaptureButtonClick}
           type="button"
-        />
+        >
+          {pendingCaptureBox ? <Check className="h-[42px] w-[42px] stroke-[3]" /> : null}
+        </button>
 
-        <div className="absolute bottom-[38px] left-[18px] h-[86px] w-[102px]">
+        <div className="absolute bottom-[150px] left-[31px] h-[82px] w-[82px]">
           <button
             aria-label="管理已拍图片"
-            className="relative block h-[74px] w-[74px] rounded-[9px] active:scale-95 disabled:active:scale-100"
+            className="relative block h-[82px] w-[82px] rounded-[10px] active:scale-95 disabled:active:scale-100"
             disabled={managerImageCount === 0}
             onClick={() => setIsManagerOpen(true)}
             type="button"
@@ -1828,29 +2018,29 @@ function CaptureSimulator({
             {latestImage ? (
               <img
                 alt=""
-                className="h-full w-full rounded-[9px] border border-white/70 object-cover"
+                className="h-full w-full rounded-[10px] border border-white/70 object-cover"
                 src={latestImage.url}
               />
             ) : (
-              <div className="h-full w-full rounded-[9px] border border-white/35 bg-black/40" />
+              <div className="h-full w-full rounded-[10px] border border-white/35 bg-black/40" />
             )}
           </button>
           {currentImages.length > 0 ? (
-            <span className="absolute right-[15px] top-[-10px] flex h-[30px] min-w-[30px] items-center justify-center rounded-full bg-[#58cf9a] px-[8px] text-[17px] font-medium leading-none text-white">
+            <span className="absolute right-[-8px] top-[-10px] flex h-[30px] min-w-[30px] items-center justify-center rounded-full bg-[#58cf9a] px-[8px] text-[17px] font-medium leading-none text-white">
               {currentImages.length}
             </span>
           ) : null}
-          <button
-            className={`absolute bottom-[-6px] right-0 h-[38px] rounded-full px-[14px] text-[18px] font-medium leading-none text-white ${
-              primaryDisabled ? 'bg-[#7a7a7a]' : 'bg-[#58cf9a] active:bg-[#45bf89]'
-            }`}
-            disabled={primaryDisabled}
-            onClick={onPrimary}
-            type="button"
-          >
-            {primaryText}
-          </button>
         </div>
+        <button
+          className={`absolute bottom-[42px] left-[16px] h-[48px] w-[104px] rounded-[24px] text-[18px] font-medium leading-none text-white ${
+            primaryDisabled ? 'bg-[#7a7a7a]' : 'bg-[#58cf9a] active:bg-[#45bf89]'
+          }`}
+          disabled={primaryDisabled}
+          onClick={onPrimary}
+          type="button"
+        >
+          {primaryText}
+        </button>
       </aside>
       {isManagerOpen ? (
         <CaptureImageManager
@@ -2182,7 +2372,13 @@ function applyAiQuestionType(question: ReviewQuestion, matchedQuestion: ReviewAi
         const subQuestionType = questionType === 'reading_comprehension'
           ? 'single_choice'
           : mapRecognizedQuestionType(subQuestion.questionType);
-        return createReviewSubQuestion(question.id, index, subQuestionType, subQuestion);
+        return createReviewSubQuestion(question.id, index, subQuestionType, {
+          ...subQuestion,
+          analysis: null,
+          answer: null,
+          blankAnswers: undefined,
+          optionAnalyses: {},
+        });
       })
     : [];
   const contentSubQuestions = aiSubQuestions.length > 0
@@ -2199,15 +2395,15 @@ function applyAiQuestionType(question: ReviewQuestion, matchedQuestion: ReviewAi
 
   return {
     ...question,
-    answer: typeof matchedQuestion.answer === 'string' ? matchedQuestion.answer : question.answer,
-    analysis: typeof matchedQuestion.analysis === 'string' ? matchedQuestion.analysis : question.analysis,
+    answer: question.answer,
+    analysis: question.analysis,
     content: isChoiceLikeQuestionType(questionType)
       ? (splitChoice?.stem || rawContent)
       : (numberedSplit?.parentContent || rawContent),
     blankCount: questionType === 'cloze' ? clozeSubQuestionCount : getDefaultBlankCount(questionType, matchedQuestion.blankCount),
     blankAnswers: createBlankAnswers(
       questionType === 'cloze' ? clozeSubQuestionCount : getDefaultBlankCount(questionType, matchedQuestion.blankCount),
-      matchedQuestion.blankAnswers || question.blankAnswers,
+      question.blankAnswers,
     ),
     optionContents: isChoiceLikeQuestionType(questionType)
       ? buildOptionContents(questionType, optionCount, matchedQuestion.optionContents || splitChoice?.optionContents || question.optionContents || {})
@@ -2215,11 +2411,15 @@ function applyAiQuestionType(question: ReviewQuestion, matchedQuestion: ReviewAi
     optionCount,
     questionType,
     questionTypeStatus: 'recognized',
-    subQuestions: questionType === 'material' || questionType === 'reading_comprehension'
-      ? (contentSubQuestions.length > 0 ? contentSubQuestions : question.subQuestions)
-      : questionType === 'cloze'
-        ? contentSubQuestions
-      : [],
+    subQuestions: questionType === 'cloze'
+      ? contentSubQuestions
+      : canAddReviewSubQuestions(questionType)
+        ? (contentSubQuestions.length > 0
+            ? contentSubQuestions
+            : question.subQuestions.length > 0
+              ? question.subQuestions
+              : [createReviewSubQuestion(question.id, 0, questionType === 'reading_comprehension' ? 'single_choice' : 'short_answer')])
+        : [],
   };
 }
 
@@ -2309,10 +2509,12 @@ function QuestionTypeSelect({
 }
 
 function CountStepper({
+  disabled = false,
   label,
   onChange,
   value,
 }: {
+  disabled?: boolean;
   label: string;
   onChange: (value: number) => void;
   value: number;
@@ -2322,7 +2524,7 @@ function CountStepper({
       <span className="px-[12px] text-[18px] leading-none text-[#68727d]">{label}</span>
       <button
         className="flex h-full w-[38px] items-center justify-center border-l border-[#d7dde3] text-[#69727c] active:bg-[#f3f5f6] disabled:text-[#c4cbd2]"
-        disabled={value <= 1}
+        disabled={disabled || value <= 1}
         onClick={() => onChange(Math.max(1, value - 1))}
         type="button"
       >
@@ -2333,6 +2535,7 @@ function CountStepper({
       </span>
       <button
         className="flex h-full w-[38px] items-center justify-center border-l border-[#d7dde3] text-[#69727c] active:bg-[#f3f5f6]"
+        disabled={disabled}
         onClick={() => onChange(Math.min(12, value + 1))}
         type="button"
       >
@@ -2344,15 +2547,23 @@ function CountStepper({
 
 function AutoResizeTextarea({
   className,
+  id,
+  onBlur,
   onChange,
   onClick,
+  onFocus,
   placeholder,
+  readOnly = false,
   value,
 }: {
   className: string;
+  id?: string;
+  onBlur?: () => void;
   onChange: (value: string) => void;
   onClick?: (event: ReactMouseEvent<HTMLTextAreaElement>) => void;
+  onFocus?: () => void;
   placeholder?: string;
+  readOnly?: boolean;
   value: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2367,9 +2578,13 @@ function AutoResizeTextarea({
   return (
     <textarea
       className={className}
+      id={id}
+      onBlur={onBlur}
       onChange={(event) => onChange(event.target.value)}
       onClick={onClick}
+      onFocus={onFocus}
       placeholder={placeholder}
+      readOnly={readOnly}
       ref={textareaRef}
       rows={1}
       value={value}
@@ -2674,6 +2889,12 @@ function TabletOcrQuestionReviewPage({
   const [pendingReviewBoxIds, setPendingReviewBoxIds] = useState<Set<string>>(new Set());
   const [recognizingReviewBoxIds, setRecognizingReviewBoxIds] = useState<Set<string>>(new Set());
   const [isReviewAddBoxMode, setIsReviewAddBoxMode] = useState(false);
+  const [focusedStemEditorId, setFocusedStemEditorId] = useState<string | null>(null);
+  const [reviewDrawingBoxDraft, setReviewDrawingBoxDraft] = useState<DrawingBoxDraft | null>(null);
+  const [showJoinMissingDialog, setShowJoinMissingDialog] = useState(false);
+  const [showJoinModeDialog, setShowJoinModeDialog] = useState(false);
+  const [joinPaperMode, setJoinPaperMode] = useState<JoinPaperMode>('by_type');
+  const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [reviewBoxDrag, setReviewBoxDrag] = useState<{
     id: string;
     action: 'move' | 'resize';
@@ -2714,6 +2935,21 @@ function TabletOcrQuestionReviewPage({
   useEffect(() => () => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
   }, []);
+
+  const hasMissingAnswerOrAnalysis = (question: ReviewQuestion) => {
+    if (!shouldShowAnswerAnalysis) return false;
+    if (isQuestionResultLoading(question) || question.questionTypeStatus === 'failed') return false;
+
+    const isEnglishCloze = isEnglishSubjectName(subject) && question.questionType === 'cloze';
+    if (question.subQuestions.length > 0) {
+      const hasMissingSubQuestion = question.subQuestions.some((subQuestion) => (
+        !hasQuestionAnswer(subQuestion) || (!isEnglishCloze && !isUsableText(subQuestion.analysis))
+      ));
+      return hasMissingSubQuestion || (isEnglishCloze && !isUsableText(question.analysis));
+    }
+
+    return !hasQuestionAnswer(question) || !isUsableText(question.analysis);
+  };
 
   const requestAiQuestionTypes = async (questionSnapshot: ReviewQuestion[]) => {
     const response = await fetch('/api/recognize-questions', {
@@ -2802,13 +3038,13 @@ function TabletOcrQuestionReviewPage({
         number: index + 1,
         content: question.content || '',
         questionType: getReviewQuestionTypeLabel(question.questionType),
-        hasAnswer: hasQuestionAnswer(question),
+        hasAnswer: false,
         subQuestions: question.subQuestions.map((subQuestion, subIndex) => ({
           id: subIndex + 1,
           number: subIndex + 1,
           content: subQuestion.content || '',
           questionType: getReviewQuestionTypeLabel(subQuestion.questionType),
-          hasAnswer: hasQuestionAnswer(subQuestion),
+          hasAnswer: false,
         })),
       };
     });
@@ -2934,7 +3170,8 @@ function TabletOcrQuestionReviewPage({
 
     async function recognizeQuestionTypes() {
       setRecognitionStatus('recognizing');
-      setRecognitionMessage(`正在智能识别 ${questionSnapshot.length} 个区域...`);
+      setRecognitionMessage(`正在识别 ${questionSnapshot.length} 个区域...`);
+      setRecognizingReviewBoxIds(new Set(questionSnapshot.map((question) => question.id)));
       setQuestions((currentQuestions) => currentQuestions.map((question) => ({
         ...question,
         questionTypeStatus: question.questionTypeStatus === 'manual' ? 'manual' : 'pending',
@@ -2948,11 +3185,15 @@ function TabletOcrQuestionReviewPage({
         }));
         setRecognitionStatus('done');
         setRecognitionMessage('');
+        if (!shouldShowAnswerAnalysis) {
+          setRecognizingReviewBoxIds(new Set());
+        }
       } catch (error) {
         console.error('[TabletOCR] question type recognition failed:', error);
         setQuestions((currentQuestions) => currentQuestions.map((question) => (
           question.questionTypeStatus === 'pending' ? { ...question, questionTypeStatus: 'failed' } : question
         )));
+        setRecognizingReviewBoxIds(new Set());
         setRecognitionStatus('failed');
         setRecognitionMessage('AI 题型识别失败，请手动核对题型');
       }
@@ -2961,7 +3202,7 @@ function TabletOcrQuestionReviewPage({
     void recognizeQuestionTypes();
 
     return undefined;
-  }, [questions, subject]);
+  }, [questions, shouldShowAnswerAnalysis, subject]);
 
   useEffect(() => {
     if (!shouldShowAnswerAnalysis || answerMatchStartedRef.current) return undefined;
@@ -2981,8 +3222,10 @@ function TabletOcrQuestionReviewPage({
         }));
         setAnswerMatchStatus('done');
         setAnswerMatchMessage('');
+        setRecognizingReviewBoxIds(new Set());
       } catch (error) {
         console.error('[TabletOCR] answer global match failed:', error);
+        setRecognizingReviewBoxIds(new Set());
         setAnswerMatchStatus('failed');
         setAnswerMatchMessage('答案解析自动匹配失败，可手动关联补充');
       }
@@ -3154,6 +3397,69 @@ function TabletOcrQuestionReviewPage({
     };
   }, [precisionRecognitionBox?.id, reviewBoxDrag]);
 
+  useEffect(() => {
+    if (!reviewDrawingBoxDraft) return undefined;
+
+    const containerRect = reviewPageWrapRefs.current[reviewDrawingBoxDraft.pageNumber]?.getBoundingClientRect();
+    if (!containerRect) return undefined;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const point = getPointerPercent(containerRect, event.clientX, event.clientY);
+      setReviewDrawingBoxDraft((currentDraft) => (
+        currentDraft
+          ? { ...currentDraft, clientX: event.clientX, clientY: event.clientY, currentX: point.x, currentY: point.y }
+          : currentDraft
+      ));
+    };
+
+    const handlePointerUp = () => {
+      const box = getBoxFromDrawingDraft(reviewDrawingBoxDraft);
+      if (box.width >= 3 && box.height >= 2) {
+        if (reviewDrawingBoxDraft.intent === 'precision') {
+          setPrecisionRecognitionBox({
+            id: `precision-recognition-${Date.now()}`,
+            pageNumber: reviewDrawingBoxDraft.pageNumber,
+            x: box.x,
+            y: box.y,
+            width: Math.max(5, box.width),
+            height: Math.max(3, box.height),
+            selected: true,
+            source: 'manual',
+          });
+        } else {
+          const boxId = `review-manual-${Date.now()}`;
+          setReviewBoxes((currentBoxes) => [
+            ...currentBoxes,
+            {
+              id: boxId,
+              pageNumber: reviewDrawingBoxDraft.pageNumber,
+              x: box.x,
+              y: box.y,
+              width: Math.max(5, box.width),
+              height: Math.max(3, box.height),
+              selected: true,
+              source: 'manual',
+            },
+          ]);
+          setPendingReviewBoxIds((currentIds) => {
+            const nextIds = new Set(currentIds);
+            nextIds.add(boxId);
+            return nextIds;
+          });
+        }
+      }
+      setReviewDrawingBoxDraft(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [reviewDrawingBoxDraft]);
+
   const scrollLeftToQuestion = (questionId: string) => {
     window.setTimeout(() => {
       leftBoxRefs.current[questionId]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -3174,6 +3480,27 @@ function TabletOcrQuestionReviewPage({
     setQuestions((currentQuestions) => currentQuestions.map((question) => (
       question.id === questionId ? updater(question) : question
     )));
+  };
+
+  const insertBlankIntoStemEditor = (
+    editorId: string,
+    value: string,
+    onChange: (value: string) => void,
+    onBlankInsert?: (nextValue: string, insertStart: number) => void,
+  ) => {
+    const textarea = document.getElementById(editorId) as HTMLTextAreaElement | null;
+    const insertText = '____';
+    const start = textarea?.selectionStart ?? value.length;
+    const end = textarea?.selectionEnd ?? value.length;
+    const nextValue = `${value.slice(0, start)}${insertText}${value.slice(end)}`;
+
+    if (onBlankInsert) onBlankInsert(nextValue, start);
+    else onChange(nextValue);
+    window.requestAnimationFrame(() => {
+      const nextTextarea = document.getElementById(editorId) as HTMLTextAreaElement | null;
+      nextTextarea?.focus();
+      nextTextarea?.setSelectionRange(start + insertText.length, start + insertText.length);
+    });
   };
 
   const isManualLinkTargetActive = (target: TabletManualLinkTarget) => (
@@ -3578,6 +3905,30 @@ function TabletOcrQuestionReviewPage({
     });
   };
 
+  const startReviewDrawingBox = (
+    page: MaterialPage,
+    event: ReactPointerEvent<HTMLDivElement>,
+    intent: DrawingBoxDraft['intent'],
+  ) => {
+    const containerRect = reviewPageWrapRefs.current[page.pageNumber]?.getBoundingClientRect();
+    if (!containerRect) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const point = getPointerPercent(containerRect, event.clientX, event.clientY);
+    setReviewDrawingBoxDraft({
+      pageNumber: page.pageNumber,
+      startX: point.x,
+      startY: point.y,
+      currentX: point.x,
+      currentY: point.y,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      intent,
+    });
+  };
+
   const mergeRecognizedReviewQuestions = (
     currentQuestions: ReviewQuestion[],
     incomingQuestions: ReviewQuestion[],
@@ -3626,7 +3977,7 @@ function TabletOcrQuestionReviewPage({
     const changedBoxIds = new Set(changedBoxes.map((box) => box.id));
 
     setRecognitionStatus('recognizing');
-    setRecognitionMessage(`正在智能识别 ${changedBoxes.length} 个区域...`);
+    setRecognitionMessage(`正在识别 ${changedBoxes.length} 个区域...`);
     setRecognizingReviewBoxIds(changedBoxIds);
     setQuestions((currentQuestions) => currentQuestions.map((question) => (
       changedBoxIds.has(question.id) ? { ...question, questionTypeStatus: 'pending' } : question
@@ -3707,16 +4058,17 @@ function TabletOcrQuestionReviewPage({
         className="mx-auto mb-[28px] w-fit rounded-[12px] border border-[#dfe6eb] bg-white p-[12px] shadow-[0_8px_22px_rgba(31,44,58,0.09)]"
       >
         <div
-          className={`relative bg-white ${isReviewAddBoxMode || manualLinkTarget ? 'cursor-crosshair' : ''}`}
+          className={`relative bg-white ${isReviewAddBoxMode || manualLinkTarget ? 'touch-none cursor-crosshair' : ''}`}
           onClick={(event) => {
+            if ((manualLinkTarget && canPlacePrecisionBoxOnPage(page)) || (isReviewAddBoxMode && page.role !== 'answer')) event.stopPropagation();
+          }}
+          onPointerDown={(event) => {
             if (manualLinkTarget && canPlacePrecisionBoxOnPage(page)) {
-              event.stopPropagation();
-              addPrecisionRecognitionBoxAtPoint(page, event.clientX, event.clientY);
+              startReviewDrawingBox(page, event, 'precision');
               return;
             }
             if (isReviewAddBoxMode && page.role !== 'answer') {
-              event.stopPropagation();
-              addReviewBoxAtPoint(page, event.clientX, event.clientY);
+              startReviewDrawingBox(page, event, 'manual');
             }
           }}
           ref={(node) => {
@@ -3725,6 +4077,11 @@ function TabletOcrQuestionReviewPage({
           style={{ width: frame.width, height: frame.height }}
         >
           <img alt="" className="h-full w-full object-fill" src={page.url} />
+          <DrawingBoxOverlay
+            draft={reviewDrawingBoxDraft?.pageNumber === page.pageNumber ? reviewDrawingBoxDraft : null}
+            frame={frame}
+            imageUrl={page.url}
+          />
           {visiblePageBoxes.map((box) => {
             const isPending = pendingReviewBoxIds.has(box.id);
             const isQueued = isPending && box.selected;
@@ -3875,17 +4232,56 @@ function TabletOcrQuestionReviewPage({
     placeholder = '题干',
     isProcessing = false,
     loadingLabel = '题干识别中...',
-  ) => (
-    isProcessing ? renderFieldLoading(loadingLabel) : (
-      <AutoResizeTextarea
-        className="min-h-[64px] w-full resize-none overflow-hidden rounded-[6px] border border-[#d7dde3] bg-white px-[16px] py-[12px] text-[20px] leading-[1.55] text-[#2f363d] outline-none focus:border-[#23bfb2]"
-        onChange={onChange}
-        onClick={(event) => event.stopPropagation()}
-        placeholder={placeholder}
-        value={value}
-      />
-    )
-  );
+    options: {
+      editorId?: string;
+      fillBlankToolbar?: boolean;
+      readOnly?: boolean;
+      onBlankInsert?: (nextValue: string, insertStart: number) => void;
+    } = {},
+  ) => {
+    if (isProcessing) return renderFieldLoading(loadingLabel);
+
+    const showToolbar = !options.readOnly && !!options.fillBlankToolbar && !!options.editorId && focusedStemEditorId === options.editorId;
+
+    return (
+      <div className="relative">
+        {showToolbar ? (
+          <div className="mb-[7px] inline-flex h-[38px] items-center gap-[3px] rounded-[7px] border border-[#d9dee3] bg-[#f1f3f4] px-[6px] text-[17px] text-[#5c646d] shadow-[0_6px_16px_rgba(31,44,58,0.08)]" onClick={(event) => event.stopPropagation()}>
+            <button className="flex h-[28px] w-[28px] items-center justify-center rounded-[5px] font-semibold active:bg-white" type="button">B</button>
+            <button className="flex h-[28px] w-[28px] items-center justify-center rounded-[5px] italic active:bg-white" type="button">I</button>
+            <button className="flex h-[28px] w-[28px] items-center justify-center rounded-[5px] underline active:bg-white" type="button">U</button>
+            <div className="mx-[4px] h-[22px] w-px bg-[#d0d6dc]" />
+            <button
+              aria-label="挖空"
+              className="flex h-[28px] w-[32px] items-center justify-center rounded-[5px] active:bg-white"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (options.editorId) insertBlankIntoStemEditor(options.editorId, value, onChange, options.onBlankInsert);
+              }}
+              type="button"
+            >
+              <span className="h-[11px] w-[20px] rounded-b-[3px] border-b-[3px] border-l-[3px] border-r-[3px] border-[#59616a]" />
+            </button>
+          </div>
+        ) : null}
+        <AutoResizeTextarea
+          className="min-h-[64px] w-full resize-none overflow-hidden rounded-[6px] border border-[#d7dde3] bg-white px-[16px] py-[12px] text-[20px] leading-[1.55] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+          id={options.editorId}
+          onBlur={() => window.setTimeout(() => {
+            setFocusedStemEditorId((currentId) => (currentId === options.editorId ? null : currentId));
+          }, 120)}
+          onChange={onChange}
+          onClick={(event) => event.stopPropagation()}
+          onFocus={() => {
+            if (!options.readOnly && options.editorId) setFocusedStemEditorId(options.editorId);
+          }}
+          placeholder={placeholder}
+          readOnly={options.readOnly}
+          value={value}
+        />
+      </div>
+    );
+  };
 
   const renderRecognitionOptionsV2 = (
     questionType: ReviewQuestionType,
@@ -3893,6 +4289,12 @@ function TabletOcrQuestionReviewPage({
     optionContents: Record<string, string> | undefined,
     onOptionChange: (letter: string, value: string) => void,
     target: TabletManualLinkTarget,
+    options: {
+      optionAnalyses?: Record<string, string>;
+      onOptionAnalysisChange?: (letter: string, value: string) => void;
+      readOnly?: boolean;
+      withOptionAnalysis?: boolean;
+    } = {},
   ) => {
     const count = questionType === 'judge' ? 2 : optionCount;
     if (isManualLinkTargetProcessing(target)) return renderFieldLoading('选项识别中...');
@@ -3904,16 +4306,29 @@ function TabletOcrQuestionReviewPage({
           {renderManualLinkButton(target, '关联选项区域')}
         </div>
         {OPTION_LETTERS.slice(0, count).split('').map((letter) => (
-          <label key={letter} className="flex items-center gap-[12px]">
-            <span className="w-[28px] shrink-0 text-right text-[18px] leading-none text-[#2f363d]">{letter}.</span>
-            <input
-              className="h-[42px] flex-1 rounded-[6px] border border-[#d7dde3] bg-white px-[14px] text-[18px] text-[#2f363d] outline-none focus:border-[#23bfb2]"
-              onChange={(event) => onOptionChange(letter, event.target.value)}
-              onClick={(event) => event.stopPropagation()}
-              placeholder={`选项 ${letter}`}
-              value={optionContents?.[letter] ?? getDefaultOptionContent(questionType, letter)}
-            />
-          </label>
+          <div key={letter} className={options.withOptionAnalysis ? 'rounded-[7px] border border-[#dfe4e8] bg-white p-[12px]' : ''}>
+            <label className="flex items-center gap-[12px]">
+              <span className="w-[28px] shrink-0 text-right text-[18px] leading-none text-[#2f363d]">{letter}.</span>
+              <input
+                className="h-[42px] flex-1 rounded-[6px] border border-[#d7dde3] bg-white px-[14px] text-[18px] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+                onChange={(event) => onOptionChange(letter, event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                placeholder={`选项 ${letter}`}
+                readOnly={options.readOnly}
+                value={optionContents?.[letter] ?? getDefaultOptionContent(questionType, letter)}
+              />
+            </label>
+            {options.withOptionAnalysis ? (
+              <AutoResizeTextarea
+                className="mt-[10px] min-h-[50px] w-full resize-none overflow-hidden rounded-[6px] border border-[#d7dde3] bg-[#f8fafb] px-[14px] py-[10px] text-[18px] leading-[1.5] text-[#2f363d] outline-none focus:border-[#23bfb2]"
+                onChange={(value) => options.onOptionAnalysisChange?.(letter, value)}
+                onClick={(event) => event.stopPropagation()}
+                placeholder={`${letter}项答案解析`}
+                readOnly={options.readOnly}
+                value={options.optionAnalyses?.[letter] || ''}
+              />
+            ) : null}
+          </div>
         ))}
       </div>
     );
@@ -4004,7 +4419,7 @@ function TabletOcrQuestionReviewPage({
     );
   };
 
-  const renderRecognitionSubQuestion = (question: ReviewQuestion, subQuestion: ReviewQuestion['subQuestions'][number], index: number) => {
+  const renderRecognitionSubQuestion = (question: ReviewQuestion, subQuestion: ReviewQuestion['subQuestions'][number], index: number, readOnly = false) => {
     const isFixedSingleChoice = isEnglishSubjectName(subject) && (question.questionType === 'reading_comprehension' || question.questionType === 'cloze');
     const isEnglishClozeSubQuestion = isEnglishSubjectName(subject) && question.questionType === 'cloze';
 
@@ -4022,6 +4437,7 @@ function TabletOcrQuestionReviewPage({
                 <select
                   aria-label="子题题型"
                   className="absolute inset-0 cursor-pointer opacity-0"
+                  disabled={readOnly}
                   onChange={(event) => {
                     const value = event.target.value as ReviewQuestionType;
                     updateQuestion(question.id, (currentQuestion) => ({
@@ -4058,6 +4474,7 @@ function TabletOcrQuestionReviewPage({
           <button
             aria-label="删除子题"
             className="flex h-[38px] w-[38px] items-center justify-center rounded-full text-[#7b8085] active:bg-[#eceff1] active:text-[#d84a4a]"
+            disabled={readOnly}
             onClick={(event) => {
               event.stopPropagation();
               updateQuestion(question.id, (currentQuestion) => ({
@@ -4084,10 +4501,49 @@ function TabletOcrQuestionReviewPage({
               updateQuestion(question.id, (currentQuestion) => ({
                 ...currentQuestion,
                 subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
-                  currentSubQuestion.id === subQuestion.id ? { ...currentSubQuestion, content: value } : currentSubQuestion
+                  currentSubQuestion.id === subQuestion.id
+                    ? {
+                        ...currentSubQuestion,
+                        blankAnswers: currentSubQuestion.questionType === 'fill_blank'
+                          ? createBlankAnswers(countInlineBlanks(value), currentSubQuestion.blankAnswers)
+                          : currentSubQuestion.blankAnswers,
+                        blankCount: currentSubQuestion.questionType === 'fill_blank'
+                          ? countInlineBlanks(value)
+                          : currentSubQuestion.blankCount,
+                        content: value,
+                      }
+                    : currentSubQuestion
                 )),
               }));
-            }, '子题题干', isManualLinkTargetProcessing({ questionId: question.id, field: 'content', subQuestionId: subQuestion.id }), '子题题干识别中...')}
+            }, '子题题干', isManualLinkTargetProcessing({ questionId: question.id, field: 'content', subQuestionId: subQuestion.id }), '子题题干识别中...', {
+              editorId: `tablet-stem-${question.id}-${subQuestion.id}`,
+              fillBlankToolbar: subQuestion.questionType === 'fill_blank',
+              readOnly,
+              onBlankInsert: (nextValue, insertStart) => {
+                updateQuestion(question.id, (currentQuestion) => ({
+                  ...currentQuestion,
+                  subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => {
+                    if (currentSubQuestion.id !== subQuestion.id) return currentSubQuestion;
+                    if (currentSubQuestion.questionType !== 'fill_blank') {
+                      return { ...currentSubQuestion, content: nextValue };
+                    }
+                    const nextBlankAnswers = syncBlankAnswersByInsertedToken(
+                      currentSubQuestion.content,
+                      nextValue,
+                      currentSubQuestion.blankAnswers,
+                      insertStart,
+                    );
+                    return {
+                      ...currentSubQuestion,
+                      answer: nextBlankAnswers.filter(Boolean).join('；'),
+                      blankAnswers: nextBlankAnswers,
+                      blankCount: nextBlankAnswers.length,
+                      content: nextValue,
+                    };
+                  }),
+                }));
+              },
+            })}
           </div>
         ) : null}
 
@@ -4097,6 +4553,7 @@ function TabletOcrQuestionReviewPage({
               <div className="mb-[12px]" onClick={(event) => event.stopPropagation()}>
                 <CountStepper
                   label="选项数"
+                  disabled={readOnly}
                   onChange={(value) => {
                     updateQuestion(question.id, (currentQuestion) => ({
                       ...currentQuestion,
@@ -4111,7 +4568,7 @@ function TabletOcrQuestionReviewPage({
                       )),
                     }));
                   }}
-                  value={subQuestion.optionCount}
+                 value={subQuestion.optionCount}
                 />
               </div>
             ) : null}
@@ -4130,30 +4587,33 @@ function TabletOcrQuestionReviewPage({
                 }));
               },
               { questionId: question.id, field: 'optionContent', subQuestionId: subQuestion.id },
+              {
+                optionAnalyses: subQuestion.optionAnalyses,
+                onOptionAnalysisChange: (letter, value) => {
+                  updateQuestion(question.id, (currentQuestion) => ({
+                    ...currentQuestion,
+                    subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
+                      currentSubQuestion.id === subQuestion.id
+                        ? {
+                            ...currentSubQuestion,
+                            optionAnalyses: { ...(currentSubQuestion.optionAnalyses || {}), [letter]: value },
+                          }
+                        : currentSubQuestion
+                    )),
+                  }));
+                },
+                readOnly,
+                withOptionAnalysis: isEnglishClozeSubQuestion,
+              },
             )}
           </div>
         ) : null}
 
-        {subQuestion.questionType === 'fill_blank' ? (
-          <div onClick={(event) => event.stopPropagation()}>
-            <CountStepper
-              label="空数"
-              onChange={(value) => {
-                updateQuestion(question.id, (currentQuestion) => ({
-                  ...currentQuestion,
-                  subQuestions: currentQuestion.subQuestions.map((currentSubQuestion) => (
-                    currentSubQuestion.id === subQuestion.id ? {
-                      ...currentSubQuestion,
-                      blankAnswers: createBlankAnswers(value, currentSubQuestion.blankAnswers),
-                      blankCount: value,
-                    } : currentSubQuestion
-                  )),
-                }));
-              }}
-              value={subQuestion.blankCount}
-            />
-          </div>
-        ) : null}
+        {shouldShowAnswerAnalysis ? renderSubQuestionAnswerAnalysis(question, subQuestion, {
+          hideAnalysis: isEnglishClozeSubQuestion,
+          hideAnswerConfig: true,
+          readOnly,
+        }) : null}
       </div>
     );
   };
@@ -4168,6 +4628,7 @@ function TabletOcrQuestionReviewPage({
   const renderChoiceAnswerButtons = (
     entity: ReviewQuestion | ReviewQuestion['subQuestions'][number],
     onChange: (value: string) => void,
+    readOnly = false,
   ) => {
     const count = entity.questionType === 'judge' ? 2 : entity.optionCount;
     const selectedLetters = (entity.answer || '').toUpperCase().split('');
@@ -4184,7 +4645,9 @@ function TabletOcrQuestionReviewPage({
                   ? 'border-[#23bfb2] bg-[#23bfb2] text-white'
                   : 'border-[#cfd5da] bg-white text-[#5c6166] active:border-[#23bfb2] active:text-[#16a69a]'
               }`}
+              disabled={readOnly}
               onClick={() => {
+                if (readOnly) return;
                 if (entity.questionType === 'multiple_choice') {
                   const nextLetters = isSelected
                     ? selectedLetters.filter((item) => item !== letter)
@@ -4209,10 +4672,11 @@ function TabletOcrQuestionReviewPage({
     onChange: (value: string) => void,
     onBlankChange: (index: number, value: string) => void,
     isProcessing: boolean,
+    readOnly = false,
   ) => {
     if (isProcessing) return renderFieldLoading('答案识别中...');
     if (isChoiceLikeQuestionType(entity.questionType)) {
-      return renderChoiceAnswerButtons(entity, onChange);
+      return renderChoiceAnswerButtons(entity, onChange, readOnly);
     }
     if (entity.questionType === 'fill_blank') {
       return (
@@ -4226,6 +4690,7 @@ function TabletOcrQuestionReviewPage({
                 className="h-[46px] flex-1 border-0 border-b border-[#d7dde3] bg-transparent px-[4px] text-[20px] text-[#2f363d] outline-none focus:border-[#23bfb2]"
                 onChange={(event) => onBlankChange(index, event.target.value)}
                 placeholder="请输入答案"
+                readOnly={readOnly}
                 value={value}
               />
             </label>
@@ -4239,6 +4704,7 @@ function TabletOcrQuestionReviewPage({
         onChange={(event) => onChange(event.target.value)}
         onClick={(event) => event.stopPropagation()}
         placeholder="请输入答案"
+        readOnly={readOnly}
         value={entity.answer || ''}
       />
     );
@@ -4248,6 +4714,7 @@ function TabletOcrQuestionReviewPage({
     value: string | undefined,
     onChange: (value: string) => void,
     isProcessing: boolean,
+    readOnly = false,
   ) => (
     isProcessing ? renderFieldLoading('解析识别中...') : (
       <AutoResizeTextarea
@@ -4255,12 +4722,13 @@ function TabletOcrQuestionReviewPage({
         onChange={onChange}
         onClick={(event) => event.stopPropagation()}
         placeholder="请输入解析"
+        readOnly={readOnly}
         value={value || ''}
       />
     )
   );
 
-  const renderParentAnswerAnalysis = (question: ReviewQuestion, options: { hideAnswer?: boolean; hideAnalysis?: boolean } = {}) => (
+  const renderParentAnswerAnalysis = (question: ReviewQuestion, options: { hideAnswer?: boolean; hideAnalysis?: boolean; readOnly?: boolean } = {}) => (
     <div className="mt-[22px] space-y-[18px]">
       {!options.hideAnswer ? (
         <div>
@@ -4274,6 +4742,7 @@ function TabletOcrQuestionReviewPage({
               return { ...currentQuestion, blankAnswers: nextBlankAnswers, answer: nextBlankAnswers.filter(Boolean).join('；') };
             }),
             isManualLinkTargetProcessing({ questionId: question.id, field: 'answer' }),
+            options.readOnly,
           )}
         </div>
       ) : null}
@@ -4284,6 +4753,7 @@ function TabletOcrQuestionReviewPage({
             question.analysis,
             (value) => updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, analysis: value })),
             isManualLinkTargetProcessing({ questionId: question.id, field: 'analysis' }),
+            options.readOnly,
           )}
         </div>
       ) : null}
@@ -4293,12 +4763,13 @@ function TabletOcrQuestionReviewPage({
   const renderSubQuestionAnswerAnalysis = (
     question: ReviewQuestion,
     subQuestion: ReviewQuestion['subQuestions'][number],
-    options: { hideAnalysis?: boolean; hideAnswerConfig?: boolean } = {},
+    options: { hideAnalysis?: boolean; hideAnswerConfig?: boolean; readOnly?: boolean } = {},
   ) => (
     <div className="mt-[16px] space-y-[16px]">
       {!options.hideAnswerConfig && (subQuestion.questionType === 'single_choice' || subQuestion.questionType === 'multiple_choice') ? (
         <div onClick={(event) => event.stopPropagation()}>
           <CountStepper
+            disabled={options.readOnly}
             label="选项数"
             onChange={(value) => updateQuestion(question.id, (currentQuestion) => ({
               ...currentQuestion,
@@ -4317,6 +4788,7 @@ function TabletOcrQuestionReviewPage({
       {!options.hideAnswerConfig && subQuestion.questionType === 'fill_blank' ? (
         <div onClick={(event) => event.stopPropagation()}>
           <CountStepper
+            disabled={options.readOnly}
             label="空数"
             onChange={(value) => updateQuestion(question.id, (currentQuestion) => ({
               ...currentQuestion,
@@ -4355,6 +4827,7 @@ function TabletOcrQuestionReviewPage({
             }),
           })),
           isManualLinkTargetProcessing({ questionId: question.id, field: 'answer', subQuestionId: subQuestion.id }),
+          options.readOnly,
         )}
       </div>
       {!options.hideAnalysis ? (
@@ -4369,6 +4842,7 @@ function TabletOcrQuestionReviewPage({
               )),
             })),
             isManualLinkTargetProcessing({ questionId: question.id, field: 'analysis', subQuestionId: subQuestion.id }),
+            options.readOnly,
           )}
         </div>
       ) : null}
@@ -4407,7 +4881,7 @@ function TabletOcrQuestionReviewPage({
     question: ReviewQuestion,
     subQuestion: ReviewQuestion['subQuestions'][number],
     index: number,
-    options: { fixedSingleChoice?: boolean } = {},
+    options: { fixedSingleChoice?: boolean; readOnly?: boolean } = {},
   ) => (
     <div className="mb-[12px] flex items-center justify-between gap-[12px]">
       <div className="flex items-center gap-[12px]">
@@ -4421,6 +4895,7 @@ function TabletOcrQuestionReviewPage({
             <select
               aria-label="子题题型"
               className="absolute inset-0 cursor-pointer opacity-0"
+              disabled={options.readOnly}
               onChange={(event) => updateImageModeSubQuestionType(question.id, subQuestion.id, event.target.value as ReviewQuestionType)}
               value={subQuestion.questionType}
             >
@@ -4438,6 +4913,7 @@ function TabletOcrQuestionReviewPage({
       <button
         aria-label="删除子题"
         className="flex h-[38px] w-[38px] items-center justify-center rounded-full text-[#7b8085] active:bg-[#eceff1] active:text-[#d84a4a]"
+        disabled={options.readOnly}
         onClick={(event) => {
           event.stopPropagation();
           deleteImageModeSubQuestion(question.id, subQuestion.id);
@@ -4449,7 +4925,7 @@ function TabletOcrQuestionReviewPage({
     </div>
   );
 
-  const renderImageModeAnswerAnalysis = (question: ReviewQuestion) => {
+  const renderImageModeAnswerAnalysis = (question: ReviewQuestion, readOnly = false) => {
     if (!shouldShowAnswerAnalysis) return null;
     const isEnglishSubject = isEnglishSubjectName(subject);
 
@@ -4458,8 +4934,8 @@ function TabletOcrQuestionReviewPage({
         <div className="mt-[22px] space-y-[16px]">
           {question.subQuestions.map((subQuestion, index) => (
             <div key={subQuestion.id} className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
-              {renderImageModeSubQuestionHeader(question, subQuestion, index, { fixedSingleChoice: isEnglishSubject && question.questionType === 'reading_comprehension' })}
-              {renderSubQuestionAnswerAnalysis(question, subQuestion)}
+              {renderImageModeSubQuestionHeader(question, subQuestion, index, { fixedSingleChoice: isEnglishSubject && question.questionType === 'reading_comprehension', readOnly })}
+              {renderSubQuestionAnswerAnalysis(question, subQuestion, { readOnly })}
             </div>
           ))}
         </div>
@@ -4471,22 +4947,22 @@ function TabletOcrQuestionReviewPage({
         <div className="mt-[22px] space-y-[16px]">
           {question.subQuestions.map((subQuestion, index) => (
             <div key={subQuestion.id} className="rounded-[8px] bg-[#f7f8f9] px-[18px] py-[18px]">
-              {renderImageModeSubQuestionHeader(question, subQuestion, index, { fixedSingleChoice: true })}
-              {renderSubQuestionAnswerAnalysis(question, subQuestion, { hideAnalysis: true, hideAnswerConfig: true })}
+              {renderImageModeSubQuestionHeader(question, subQuestion, index, { fixedSingleChoice: true, readOnly })}
+              {renderSubQuestionAnswerAnalysis(question, subQuestion, { hideAnalysis: true, hideAnswerConfig: true, readOnly })}
             </div>
           ))}
-          {renderParentAnswerAnalysis(question, { hideAnswer: true })}
+          {renderParentAnswerAnalysis(question, { hideAnswer: true, readOnly })}
         </div>
       );
     }
 
-    return renderParentAnswerAnalysis(question);
+    return renderParentAnswerAnalysis(question, { readOnly });
   };
 
-  const renderRecognitionContent = (question: ReviewQuestion) => {
+  const renderRecognitionContent = (question: ReviewQuestion, readOnly = false) => {
     const isEnglishSubject = isEnglishSubjectName(subject);
     const isCloze = isEnglishSubject && question.questionType === 'cloze';
-    const isCompound = question.questionType === 'material' || (isEnglishSubject && question.questionType === 'reading_comprehension') || isCloze;
+    const isCompound = canAddReviewSubQuestions(question.questionType, subject);
 
     return (
       <div className="space-y-[18px] rounded-[8px] border border-[#e0e5e9] bg-white p-[18px]">
@@ -4496,8 +4972,41 @@ function TabletOcrQuestionReviewPage({
             {renderManualLinkButton({ questionId: question.id, field: 'content' }, '关联父题题干')}
           </div>
           {renderRecognitionTextAreaV2(question.content || '', (value) => {
-            updateQuestion(question.id, (currentQuestion) => ({ ...currentQuestion, content: value }));
-          }, '题干', isManualLinkTargetProcessing({ questionId: question.id, field: 'content' }), '题干识别中...')}
+            updateQuestion(question.id, (currentQuestion) => ({
+              ...currentQuestion,
+              blankAnswers: currentQuestion.questionType === 'fill_blank'
+                ? createBlankAnswers(countInlineBlanks(value), currentQuestion.blankAnswers)
+                : currentQuestion.blankAnswers,
+              blankCount: currentQuestion.questionType === 'fill_blank'
+                ? countInlineBlanks(value)
+                : currentQuestion.blankCount,
+              content: value,
+            }));
+          }, '题干', isManualLinkTargetProcessing({ questionId: question.id, field: 'content' }), '题干识别中...', {
+            editorId: `tablet-stem-${question.id}`,
+            fillBlankToolbar: question.questionType === 'fill_blank',
+            readOnly,
+            onBlankInsert: (nextValue, insertStart) => {
+              updateQuestion(question.id, (currentQuestion) => {
+                if (currentQuestion.questionType !== 'fill_blank') {
+                  return { ...currentQuestion, content: nextValue };
+                }
+                const nextBlankAnswers = syncBlankAnswersByInsertedToken(
+                  currentQuestion.content,
+                  nextValue,
+                  currentQuestion.blankAnswers,
+                  insertStart,
+                );
+                return {
+                  ...currentQuestion,
+                  answer: nextBlankAnswers.filter(Boolean).join('；'),
+                  blankAnswers: nextBlankAnswers,
+                  blankCount: nextBlankAnswers.length,
+                  content: nextValue,
+                };
+              });
+            },
+          })}
         </div>
 
         {isChoiceLikeQuestionType(question.questionType) ? (
@@ -4505,6 +5014,7 @@ function TabletOcrQuestionReviewPage({
             {question.questionType !== 'judge' ? (
               <div className="mb-[12px]" onClick={(event) => event.stopPropagation()}>
                 <CountStepper
+                  disabled={readOnly}
                   label="选项数"
                   onChange={(value) => {
                     updateQuestion(question.id, (currentQuestion) => ({
@@ -4528,23 +5038,15 @@ function TabletOcrQuestionReviewPage({
                 }));
               },
               { questionId: question.id, field: 'optionContent' },
+              { readOnly },
             )}
-          </div>
-        ) : null}
-
-        {question.questionType === 'fill_blank' ? (
-          <div onClick={(event) => event.stopPropagation()}>
-            <CountStepper label="空数" onChange={(value) => updateQuestion(question.id, (currentQuestion) => ({
-              ...currentQuestion,
-              blankAnswers: createBlankAnswers(value, currentQuestion.blankAnswers),
-              blankCount: value,
-            }))} value={question.blankCount} />
           </div>
         ) : null}
 
         {isCloze ? (
           <div className="flex items-center gap-[18px] rounded-[7px] bg-[#f3f4f5] px-[16px] py-[10px]" onClick={(event) => event.stopPropagation()}>
             <CountStepper
+              disabled={readOnly}
               label="子题数"
               onChange={(value) => {
                 updateQuestion(question.id, (currentQuestion) => {
@@ -4566,6 +5068,7 @@ function TabletOcrQuestionReviewPage({
             <span className="inline-flex h-[40px] min-w-[86px] items-center justify-center rounded-[7px] border border-[#d7dde3] bg-[#eceff1] px-[14px] text-[20px] leading-none text-[#7b858f]">单选</span>
             <div className="h-[28px] w-px bg-[#c9ced3]" />
             <CountStepper
+              disabled={readOnly}
               label="选项数"
               onChange={(value) => {
                 updateQuestion(question.id, (currentQuestion) => ({
@@ -4585,14 +5088,16 @@ function TabletOcrQuestionReviewPage({
 
         {isCompound ? (
           <div className="space-y-[4px]">
-            {question.questionType !== 'cloze' ? renderRecognitionAddSubButton(question, question.subQuestions.length - 1) : null}
+            {question.questionType !== 'cloze' && !readOnly ? renderRecognitionAddSubButton(question, question.subQuestions.length - 1) : null}
             {question.subQuestions.map((subQuestion, index) => (
               <div key={subQuestion.id}>
-                {renderRecognitionSubQuestion(question, subQuestion, index)}
+                {renderRecognitionSubQuestion(question, subQuestion, index, readOnly)}
               </div>
             ))}
           </div>
         ) : null}
+        {shouldShowAnswerAnalysis && !isCompound ? renderParentAnswerAnalysis(question, { readOnly }) : null}
+        {shouldShowAnswerAnalysis && isCloze ? renderParentAnswerAnalysis(question, { hideAnswer: true, readOnly }) : null}
       </div>
     );
   };
@@ -4604,32 +5109,29 @@ function TabletOcrQuestionReviewPage({
     </div>
   );
 
-  const renderReviewQuestionSkeleton = (box: RecognitionBox) => (
+  const renderReviewQuestionSkeleton = (item: { id: string }) => (
     <section
-      key={`skeleton-${box.id}`}
-      className="relative rounded-[10px] border-[2px] border-dashed border-[#cbd5dc] bg-white p-[24px] shadow-[0_6px_18px_rgba(31,44,58,0.05)]"
+      key={`skeleton-${item.id}`}
+      className="relative rounded-[10px] bg-white px-[30px] py-[28px] shadow-[0_4px_14px_rgba(31,44,58,0.04)]"
     >
-      <div className="flex h-[42px] items-center justify-between">
-        <div className="h-[26px] w-[128px] rounded-full bg-[#dce4ea]" />
-        <div className="h-[30px] w-[146px] rounded-full bg-[#e8edf1]" />
-      </div>
-      <div className="mt-[22px] rounded-[8px] border border-[#edf1f3] bg-[#f8fafb] p-[18px]">
-        <div className="space-y-[12px]">
-          <div className="h-[16px] w-[86%] rounded-full bg-[#dce4ea]" />
-          <div className="h-[16px] w-[68%] rounded-full bg-[#e3e9ee]" />
-          <div className="h-[16px] w-[74%] rounded-full bg-[#dce4ea]" />
-        </div>
-        <div className="mt-[18px] flex items-center gap-[12px] text-[20px] font-medium leading-none text-[#3f4852]">
-          <div className="h-[26px] w-[26px] animate-spin rounded-full border-[3px] border-[#cfe5e2] border-t-[#23bfb2]" />
-          正在识别中
-        </div>
+      <div className="space-y-[20px]">
+        <div className="h-[18px] w-[46%] rounded-full bg-gradient-to-r from-[#e3e5e7] via-[#f1f2f3] to-[#e7e9eb]" />
+        <div className="h-[18px] w-full rounded-full bg-gradient-to-r from-[#e3e5e7] via-[#f1f2f3] to-[#e7e9eb]" />
+        <div className="h-[18px] w-full rounded-full bg-gradient-to-r from-[#e3e5e7] via-[#f1f2f3] to-[#e7e9eb]" />
       </div>
     </section>
+  );
+
+  const isQuestionResultLoading = (question: ReviewQuestion) => (
+    recognizingReviewBoxIds.has(question.id) ||
+    question.questionTypeStatus === 'pending' ||
+    (shouldShowAnswerAnalysis && recognitionStatus === 'done' && answerMatchStatus === 'matching')
   );
 
   const renderQuestionCard = (question: ReviewQuestion) => {
     const isActive = question.id === activeQuestionId;
     const isCropEditing = editingCropQuestionId === question.id;
+    const isQuestionEditing = editingQuestionId === question.id;
     const isQuestionRecognizing = recognizingReviewBoxIds.has(question.id);
     const questionImageData = isCropEditing
       ? question.croppedImageData
@@ -4646,40 +5148,79 @@ function TabletOcrQuestionReviewPage({
         onClick={() => handleSelectQuestion(question.id)}
       >
         <header className="flex h-[74px] items-center justify-between border-b border-[#edf0f2] px-[24px]">
-          <QuestionTypeSelect
-            onChange={(value) => {
-              updateQuestion(question.id, (currentQuestion) => ({
-                ...currentQuestion,
-                blankAnswers: value === 'fill_blank' ? createBlankAnswers(currentQuestion.blankCount, currentQuestion.blankAnswers) : currentQuestion.blankAnswers,
-                blankCount: value === 'cloze' ? Math.max(1, currentQuestion.blankCount) : currentQuestion.blankCount,
-                content: currentQuestion.content || '',
-                optionContents: isChoiceLikeQuestionType(value)
-                  ? buildOptionContents(value, getDefaultOptionCount(value, currentQuestion.optionCount), currentQuestion.optionContents || {})
-                  : {},
-                optionCount: value === 'cloze' || value === 'reading_comprehension' ? Math.max(4, currentQuestion.optionCount) : currentQuestion.optionCount,
-                questionType: value,
-                questionTypeStatus: 'manual',
-                subQuestions: value === 'material' && currentQuestion.subQuestions.length === 0
-                  ? [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'short_answer', answer: '', analysis: '', blankAnswers: [''], content: '', optionContents: {}, optionCount: 4, blankCount: 1 }]
-                  : value === 'reading_comprehension'
-                    ? (currentQuestion.subQuestions.length > 0
-                        ? currentQuestion.subQuestions.map((subQuestion) => ({
+          <div className={isQuestionEditing ? '' : 'pointer-events-none'}>
+            <QuestionTypeSelect
+              onChange={(value) => {
+                updateQuestion(question.id, (currentQuestion) => {
+                  const existingSubQuestions = currentQuestion.subQuestions || [];
+                  const nextSubQuestions = (() => {
+                    if (value === 'cloze') {
+                      return buildSubQuestionsFromContent(currentQuestion.id, 'cloze', currentQuestion.content, currentQuestion.blankCount);
+                    }
+                    if (value === 'reading_comprehension') {
+                      return existingSubQuestions.length > 0
+                        ? existingSubQuestions.map((subQuestion) => ({
                             ...subQuestion,
                             optionContents: buildOptionContents('single_choice', Math.max(4, subQuestion.optionCount), subQuestion.optionContents || {}),
                             optionCount: Math.max(4, subQuestion.optionCount),
                             questionType: 'single_choice' as ReviewQuestionType,
                           }))
-                        : [{ id: `${currentQuestion.id}-sub-${Date.now()}`, questionType: 'single_choice', answer: '', analysis: '', blankAnswers: [''], content: '', optionContents: buildOptionContents('single_choice', 4), optionCount: 4, blankCount: 1 }])
-                    : value === 'cloze'
-                      ? buildSubQuestionsFromContent(currentQuestion.id, 'cloze', currentQuestion.content, currentQuestion.blankCount)
-                      : currentQuestion.subQuestions,
-              }));
-            }}
-            options={reviewQuestionTypeOptions}
-            status={question.questionTypeStatus}
-            value={question.questionType}
-          />
+                        : [createReviewSubQuestion(currentQuestion.id, 0, 'single_choice', { optionCount: 4 })];
+                    }
+                    if (canAddReviewSubQuestions(value, subject)) {
+                      return existingSubQuestions.length > 0
+                        ? existingSubQuestions
+                        : [createReviewSubQuestion(currentQuestion.id, 0, 'short_answer')];
+                    }
+                    return [];
+                  })();
+                  const inlineBlankCount = countInlineBlanks(currentQuestion.content);
+
+                  return {
+                    ...currentQuestion,
+                    blankAnswers: value === 'fill_blank'
+                      ? createBlankAnswers(inlineBlankCount, currentQuestion.blankAnswers)
+                      : currentQuestion.blankAnswers,
+                    blankCount: value === 'fill_blank'
+                      ? inlineBlankCount
+                      : value === 'cloze'
+                        ? Math.max(1, currentQuestion.blankCount)
+                        : currentQuestion.blankCount,
+                    content: currentQuestion.content || '',
+                    optionContents: isChoiceLikeQuestionType(value)
+                      ? buildOptionContents(value, getDefaultOptionCount(value, currentQuestion.optionCount), currentQuestion.optionContents || {})
+                      : {},
+                    optionCount: value === 'cloze' || value === 'reading_comprehension'
+                      ? Math.max(4, currentQuestion.optionCount)
+                      : isChoiceLikeQuestionType(value)
+                        ? getDefaultOptionCount(value, currentQuestion.optionCount)
+                        : currentQuestion.optionCount,
+                    questionType: value,
+                    questionTypeStatus: 'manual',
+                    subQuestions: nextSubQuestions,
+                  };
+                });
+              }}
+              options={reviewQuestionTypeOptions}
+              status={question.questionTypeStatus}
+              value={question.questionType}
+            />
+          </div>
           <div className="flex items-center gap-[10px]">
+            <button
+              className={`h-[42px] rounded-[7px] border px-[16px] text-[19px] font-medium leading-none ${
+                isQuestionEditing
+                  ? 'border-[#23bfb2] bg-[#23bfb2] text-white active:bg-[#12a99d]'
+                  : 'border-[#cfd5da] bg-white text-[#3f4852] active:bg-[#f4f6f7]'
+              }`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setEditingQuestionId(isQuestionEditing ? null : question.id);
+              }}
+              type="button"
+            >
+              {isQuestionEditing ? '完成' : '编辑'}
+            </button>
             <StepSegmentedControl
               mode={question.viewMode}
               onChange={(value) => {
@@ -4736,11 +5277,14 @@ function TabletOcrQuestionReviewPage({
               cropRegion={isCropEditing ? cropRegion : null}
               imageData={questionImageData}
               isEditing={isCropEditing}
-              onClick={() => handleStartCrop(question)}
+              onClick={() => {
+                if (isQuestionEditing) handleStartCrop(question);
+              }}
               onCropDragStart={(event, action) => {
-                if (!cropRegion) return;
+                if (!isQuestionEditing || !cropRegion) return;
                 event.preventDefault();
                 event.stopPropagation();
+                event.currentTarget.setPointerCapture?.(event.pointerId);
                 setCropDrag({
                   action,
                   startClientX: event.clientX,
@@ -4752,7 +5296,7 @@ function TabletOcrQuestionReviewPage({
               onImageLoad={(width, height) => handleQuestionImageLoad(question.id, width, height)}
             />
           ) : (
-            renderRecognitionContent(question)
+            renderRecognitionContent(question, !isQuestionEditing)
           )}
 
           {isCropEditing ? (
@@ -4783,6 +5327,7 @@ function TabletOcrQuestionReviewPage({
 
           {question.viewMode === 'image' ? (
           <div className="mt-[18px]">
+            {isQuestionEditing ? (
             <AnswerConfigPanel
               answerMode={shouldShowAnswerAnalysis}
               onAddSubQuestion={(questionType) => {
@@ -4874,7 +5419,8 @@ function TabletOcrQuestionReviewPage({
               question={question}
               subject={subject}
             />
-            {renderImageModeAnswerAnalysis(question)}
+            ) : null}
+            {renderImageModeAnswerAnalysis(question, !isQuestionEditing)}
           </div>
           ) : null}
         </div>
@@ -4913,7 +5459,9 @@ function TabletOcrQuestionReviewPage({
     });
 
     return items.map((item) => (
-      item.type === 'question' ? renderQuestionCard(item.question) : renderReviewQuestionSkeleton(item.box)
+      item.type === 'question'
+        ? (isQuestionResultLoading(item.question) ? renderReviewQuestionSkeleton(item.question) : renderQuestionCard(item.question))
+        : renderReviewQuestionSkeleton(item.box)
     ));
   };
 
@@ -4921,7 +5469,27 @@ function TabletOcrQuestionReviewPage({
   const shouldShowRecognitionBar = recognitionStatus === 'recognizing' || answerMatchStatus === 'matching';
   const reviewStatusMessage = answerMatchStatus === 'matching'
     ? (answerMatchMessage || '正在匹配答案解析...')
-    : (recognitionMessage || '正在智能识别中...');
+    : (recognitionMessage || '正在识别中...');
+  const hasJoinableQuestions = questions.some((question) => (
+    !isQuestionResultLoading(question) && question.questionTypeStatus !== 'failed'
+  ));
+  const missingAnswerQuestionCount = questions.filter(hasMissingAnswerOrAnalysis).length;
+  const handleJoinPaperClick = () => {
+    if (!hasJoinableQuestions) return;
+    if (missingAnswerQuestionCount > 0) {
+      setShowJoinMissingDialog(true);
+      return;
+    }
+    setShowJoinModeDialog(true);
+  };
+  const handleConfirmMissingJoin = () => {
+    setShowJoinMissingDialog(false);
+    onExit();
+  };
+  const handleConfirmJoinMode = () => {
+    setShowJoinModeDialog(false);
+    onExit();
+  };
 
   return (
     <div className="absolute inset-0 z-30 bg-[#eef2f5]">
@@ -4934,13 +5502,17 @@ function TabletOcrQuestionReviewPage({
         >
           <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
           <span className="text-[28px] font-semibold leading-none">核对识别结果</span>
+          <span className="text-[20px] font-normal leading-none text-[#7b838c]">
+            （核对并补充识别出的题目内容）
+          </span>
         </button>
         <div className="absolute right-[188px] top-[24px] rounded-full bg-[#e7f7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#2fac76]">
           {subject}
         </div>
         <button
-          className="absolute right-[40px] top-[20px] h-[48px] rounded-[8px] bg-[#23bfb2] px-[24px] text-[20px] font-medium leading-none text-white active:bg-[#12a99d]"
-          onClick={onExit}
+          className="absolute right-[40px] top-[20px] h-[48px] rounded-[8px] bg-[#23bfb2] px-[24px] text-[20px] font-medium leading-none text-white active:bg-[#12a99d] disabled:bg-[#cfd7dd] disabled:text-white disabled:active:bg-[#cfd7dd]"
+          disabled={!hasJoinableQuestions}
+          onClick={handleJoinPaperClick}
           type="button"
         >
           加入试卷
@@ -4951,6 +5523,23 @@ function TabletOcrQuestionReviewPage({
         <div className="absolute left-1/2 top-[104px] z-50 -translate-x-1/2 rounded-[8px] bg-[rgba(32,33,36,0.88)] px-[24px] py-[13px] text-[20px] font-medium leading-none text-white shadow-[0_12px_30px_rgba(0,0,0,0.22)]">
           {toastMessage}
         </div>
+      ) : null}
+
+      {showJoinMissingDialog ? (
+        <JoinMissingAnswerDialog
+          missingCount={missingAnswerQuestionCount}
+          onCancel={() => setShowJoinMissingDialog(false)}
+          onConfirm={handleConfirmMissingJoin}
+        />
+      ) : null}
+
+      {showJoinModeDialog ? (
+        <JoinPaperModeDialog
+          mode={joinPaperMode}
+          onCancel={() => setShowJoinModeDialog(false)}
+          onChange={setJoinPaperMode}
+          onConfirm={handleConfirmJoinMode}
+        />
       ) : null}
 
       <main className="absolute bottom-0 left-0 right-0 top-[88px] flex">
@@ -5056,6 +5645,192 @@ function TabletOcrQuestionReviewPage({
   );
 }
 
+function DrawingBoxOverlay({
+  draft,
+  frame,
+  imageUrl,
+}: {
+  draft: DrawingBoxDraft | null;
+  frame: { width: number; height: number };
+  imageUrl: string;
+}) {
+  if (!draft) return null;
+
+  const box = getBoxFromDrawingDraft(draft);
+  const lensSize = 124;
+  const zoom = 2.2;
+  const lensLeft = Math.min(Math.max((draft.currentX / 100) * frame.width + 24, lensSize / 2), frame.width - lensSize / 2);
+  const lensTop = Math.min(Math.max((draft.currentY / 100) * frame.height - 154, lensSize / 2), frame.height - lensSize / 2);
+
+  return (
+    <>
+      <div
+        className="pointer-events-none absolute border-2 border-[#23bfb2] bg-[#ddf8f4]/30 shadow-[0_0_0_2px_rgba(35,191,178,0.18)]"
+        style={{
+          height: `${box.height}%`,
+          left: `${box.x}%`,
+          top: `${box.y}%`,
+          width: `${box.width}%`,
+        }}
+      />
+      <div
+        className="pointer-events-none absolute z-40 overflow-hidden rounded-full border-[3px] border-white bg-white shadow-[0_8px_24px_rgba(31,44,58,0.24)]"
+        style={{
+          height: lensSize,
+          left: lensLeft - lensSize / 2,
+          top: lensTop - lensSize / 2,
+          width: lensSize,
+        }}
+      >
+        <img
+          alt=""
+          className="absolute max-w-none"
+          src={imageUrl}
+          style={{
+            height: frame.height * zoom,
+            left: lensSize / 2 - (draft.currentX / 100) * frame.width * zoom,
+            top: lensSize / 2 - (draft.currentY / 100) * frame.height * zoom,
+            width: frame.width * zoom,
+          }}
+        />
+        <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-[#23bfb2]/60" />
+        <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-[#23bfb2]/60" />
+      </div>
+    </>
+  );
+}
+
+function JoinMissingAnswerDialog({
+  missingCount,
+  onCancel,
+  onConfirm,
+}: {
+  missingCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 bg-black/45">
+      <section className="absolute left-1/2 top-1/2 w-[620px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[12px] bg-white shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
+        <header className="relative flex h-[78px] items-center bg-[#e9fbf7] px-[30px]">
+          <h3 className="text-[28px] font-medium leading-none text-[#23bfb2]">加入试卷</h3>
+          <button
+            aria-label="关闭加入试卷确认"
+            className="absolute right-[24px] top-[21px] flex h-[36px] w-[36px] items-center justify-center rounded-full bg-[#23bfb2] text-white active:bg-[#12a99d]"
+            onClick={onCancel}
+            type="button"
+          >
+            <X className="h-[22px] w-[22px] stroke-[3]" />
+          </button>
+        </header>
+        <div className="px-[48px] pb-[38px] pt-[36px] text-center">
+          <div className="text-[26px] font-semibold leading-none text-[#202124]">确认加入试卷吗？</div>
+          <p className="mt-[28px] text-[22px] leading-[36px] text-[#5f6872]">
+            当前还有{missingCount}道题的答案/解析没有补充，您可以在后续组卷页面使用AI批量补充功能，进行补充。
+          </p>
+          <div className="mt-[38px] flex justify-center gap-[28px]">
+            <button
+              className="h-[50px] min-w-[128px] rounded-[7px] border border-[#c9ced3] bg-white px-[28px] text-[22px] leading-none text-[#5f6872] active:bg-[#f4f6f7]"
+              onClick={onCancel}
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              className="h-[50px] min-w-[128px] rounded-[7px] bg-[#23bfb2] px-[28px] text-[22px] font-medium leading-none text-white active:bg-[#12a99d]"
+              onClick={onConfirm}
+              type="button"
+            >
+              确认
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function JoinPaperModeDialog({
+  mode,
+  onCancel,
+  onChange,
+  onConfirm,
+}: {
+  mode: JoinPaperMode;
+  onCancel: () => void;
+  onChange: (mode: JoinPaperMode) => void;
+  onConfirm: () => void;
+}) {
+  const options: Array<{ value: JoinPaperMode; title: string; tip: string }> = [
+    { value: 'by_type', title: '按题型加入试卷', tip: '该方式可能会改变题目显示顺序' },
+    { value: 'by_order', title: '按题目顺序加入试卷', tip: '该方式进入到组卷页面后，将会只有一个大题名称' },
+  ];
+
+  return (
+    <div className="absolute inset-0 z-50 bg-black/45">
+      <section className="absolute left-1/2 top-1/2 w-[820px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[12px] bg-white shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
+        <header className="relative flex h-[78px] items-center bg-[#e9fbf7] px-[30px]">
+          <h3 className="text-[28px] font-medium leading-none text-[#23bfb2]">加入试卷</h3>
+          <button
+            aria-label="关闭组卷方式选择"
+            className="absolute right-[24px] top-[21px] flex h-[36px] w-[36px] items-center justify-center rounded-full bg-[#23bfb2] text-white active:bg-[#12a99d]"
+            onClick={onCancel}
+            type="button"
+          >
+            <X className="h-[22px] w-[22px] stroke-[3]" />
+          </button>
+        </header>
+        <div className="px-[86px] pb-[34px] pt-[34px]">
+          <div className="text-[23px] leading-none text-[#3f4852]">请选择一种组卷方式：</div>
+          <div className="mt-[24px] space-y-[20px]">
+            {options.map((option) => {
+              const isSelected = mode === option.value;
+              return (
+                <button
+                  key={option.value}
+                  className={`flex w-full items-center gap-[22px] rounded-[10px] border px-[28px] py-[20px] text-left ${
+                    isSelected
+                      ? 'border-[#23bfb2] bg-[#e9fbf7]'
+                      : 'border-[#dfe4e8] bg-white active:bg-[#f6f8f9]'
+                  }`}
+                  onClick={() => onChange(option.value)}
+                  type="button"
+                >
+                  <span className={`flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-full border-[2px] ${
+                    isSelected ? 'border-[#23bfb2]' : 'border-[#c9ced3]'
+                  }`}>
+                    {isSelected ? <span className="h-[10px] w-[10px] rounded-full bg-[#23bfb2]" /> : null}
+                  </span>
+                  <span>
+                    <span className="block text-[23px] font-semibold leading-none text-[#202124]">{option.title}</span>
+                    <span className="mt-[12px] block text-[19px] leading-none text-[#8b949e]">{option.tip}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-[34px] flex justify-center gap-[24px]">
+            <button
+              className="h-[50px] min-w-[128px] rounded-[7px] border border-[#c9ced3] bg-white px-[28px] text-[22px] leading-none text-[#5f6872] active:bg-[#f4f6f7]"
+              onClick={onCancel}
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              className="h-[50px] min-w-[142px] rounded-[7px] bg-[#23bfb2] px-[28px] text-[22px] font-medium leading-none text-white active:bg-[#12a99d]"
+              onClick={onConfirm}
+              type="button"
+            >
+              确认加入
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TabletOcrContentSelectionPage({
   images,
   mode,
@@ -5075,6 +5850,7 @@ function TabletOcrContentSelectionPage({
   const [materialPages, setMaterialPages] = useState<MaterialPage[]>([]);
   const [activePageNumber, setActivePageNumber] = useState(1);
   const [boxes, setBoxes] = useState<RecognitionBox[]>([]);
+  const [drawingBoxDraft, setDrawingBoxDraft] = useState<DrawingBoxDraft | null>(null);
   const [dragState, setDragState] = useState<{
     id: string;
     action: 'move' | 'resize';
@@ -5151,7 +5927,6 @@ function TabletOcrContentSelectionPage({
         const pagesForCut = mode === 'separate_answer'
           ? newPages.filter((page) => page.role !== 'answer')
           : newPages;
-
         materialPagesRef.current = pages;
         setMaterialPages(pages);
         setActivePageNumber((pagesForCut[0] || pages[0])?.pageNumber || 1);
@@ -5238,11 +6013,63 @@ function TabletOcrContentSelectionPage({
     };
   }, [dragState]);
 
+  useEffect(() => {
+    if (!drawingBoxDraft) return undefined;
+
+    const containerRect = pageWrapRefs.current[drawingBoxDraft.pageNumber]?.getBoundingClientRect();
+    if (!containerRect) return undefined;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const point = getPointerPercent(containerRect, event.clientX, event.clientY);
+      setDrawingBoxDraft((currentDraft) => (
+        currentDraft
+          ? { ...currentDraft, clientX: event.clientX, clientY: event.clientY, currentX: point.x, currentY: point.y }
+          : currentDraft
+      ));
+    };
+
+    const handlePointerUp = () => {
+      const box = getBoxFromDrawingDraft(drawingBoxDraft);
+      if (box.width >= 3 && box.height >= 2) {
+        setBoxes((currentBoxes) => [
+          ...currentBoxes,
+          {
+            id: `manual-${Date.now()}`,
+            pageNumber: drawingBoxDraft.pageNumber,
+            x: box.x,
+            y: box.y,
+            width: Math.max(5, box.width),
+            height: Math.max(3, box.height),
+            selected: true,
+            source: 'manual',
+          },
+        ]);
+        setStatus('ready');
+        setDismissedEmptyPromptPages((currentPages) => {
+          const nextPages = new Set(currentPages);
+          nextPages.add(drawingBoxDraft.pageNumber);
+          return nextPages;
+        });
+      }
+      setDrawingBoxDraft(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [drawingBoxDraft]);
+
   const activePage = materialPages.find((page) => page.pageNumber === activePageNumber) || materialPages[0];
   const questionPages = materialPages.filter((page) => page.role !== 'answer');
   const answerPages = materialPages.filter((page) => page.role === 'answer');
   const isSeparateMode = mode === 'separate_answer';
   const selectedCount = boxes.filter((box) => box.selected).length;
+  const isAllBoxesSelected = boxes.length > 0 && selectedCount === boxes.length;
+  const isSomeBoxesSelected = selectedCount > 0 && !isAllBoxesSelected;
 
   const addManualBox = (targetPage = activePage?.role === 'answer' ? questionPages[0] : activePage) => {
     if (!targetPage) return;
@@ -5296,6 +6123,27 @@ function TabletOcrContentSelectionPage({
     });
   };
 
+  const startDrawingBox = (page: MaterialPage, event: ReactPointerEvent<HTMLDivElement>) => {
+    const containerRect = pageWrapRefs.current[page.pageNumber]?.getBoundingClientRect();
+    if (!containerRect) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setActivePageNumber(page.pageNumber);
+    const point = getPointerPercent(containerRect, event.clientX, event.clientY);
+    setDrawingBoxDraft({
+      pageNumber: page.pageNumber,
+      startX: point.x,
+      startY: point.y,
+      currentX: point.x,
+      currentY: point.y,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      intent: 'manual',
+    });
+  };
+
   const startBoxDrag = (
     event: ReactPointerEvent,
     box: RecognitionBox,
@@ -5321,6 +6169,14 @@ function TabletOcrContentSelectionPage({
     setBoxes((currentBoxes) => currentBoxes.map((box) => (
       box.id === boxId ? { ...box, selected: !box.selected } : box
     )));
+  };
+
+  const toggleAllBoxes = () => {
+    if (boxes.length === 0) return;
+    setBoxes((currentBoxes) => currentBoxes.map((box) => ({
+      ...box,
+      selected: !isAllBoxesSelected,
+    })));
   };
 
   const deleteBox = (boxId: string) => {
@@ -5406,12 +6262,13 @@ function TabletOcrContentSelectionPage({
         }}
       >
         <div
-          className={`relative bg-white ${isAddBoxMode && isQuestionPage ? 'cursor-crosshair' : ''}`}
+          className={`relative bg-white ${isAddBoxMode && isQuestionPage ? 'touch-none cursor-crosshair' : ''}`}
           onClick={(event) => {
+            if (isAddBoxMode && isQuestionPage) event.stopPropagation();
+          }}
+          onPointerDown={(event) => {
             if (isAddBoxMode && isQuestionPage) {
-              event.stopPropagation();
-              setActivePageNumber(page.pageNumber);
-              addManualBoxAtPoint(page, event.clientX, event.clientY);
+              startDrawingBox(page, event);
             }
           }}
           ref={(node) => {
@@ -5423,6 +6280,11 @@ function TabletOcrContentSelectionPage({
           style={{ width: frame.width, height: frame.height }}
         >
           <img alt="" className="h-full w-full object-fill" src={page.url} />
+          <DrawingBoxOverlay
+            draft={drawingBoxDraft?.pageNumber === page.pageNumber ? drawingBoxDraft : null}
+            frame={frame}
+            imageUrl={page.url}
+          />
           {isQuestionPage ? pageBoxes.map((box) => (
             <div
               key={box.id}
@@ -5560,7 +6422,10 @@ function TabletOcrContentSelectionPage({
           type="button"
         >
           <ChevronLeft className="h-[34px] w-[34px] stroke-[2.3]" />
-          <span className="text-[28px] font-semibold leading-none">识别作业资料</span>
+          <span className="text-[28px] font-semibold leading-none">选择识别内容</span>
+          <span className="text-[20px] font-normal leading-none text-[#7b838c]">
+            （在左侧资料上选择要识别的<strong className="font-semibold text-[#5f6872]">完整内容</strong>）
+          </span>
         </button>
         <div className="absolute right-[40px] top-[24px] rounded-full bg-[#e7f7f1] px-[18px] py-[10px] text-[20px] leading-none text-[#2fac76]">
           {subject}
@@ -5595,9 +6460,35 @@ function TabletOcrContentSelectionPage({
             清空
           </button>
         </div>
-        <div className="absolute right-[34px] top-[28px] flex items-center gap-[18px]">
-          <span className="text-[20px] leading-none text-[#68727d]">
-            已选中{selectedCount}题/已框选{boxes.length}题
+        <div className="absolute left-[690px] top-[15px] flex h-[46px] items-center gap-[16px]">
+          <button
+            aria-pressed={isAllBoxesSelected}
+            className={`inline-flex h-[34px] items-center gap-[7px] rounded-[6px] px-[8px] text-[18px] leading-none ${
+              isAllBoxesSelected
+                ? 'text-[#68727d] active:bg-[#f4f6f7]'
+                : isSomeBoxesSelected
+                  ? 'text-[#4f5963] active:bg-[#f4f6f7]'
+                  : 'text-[#8b949e] active:bg-[#f4f6f7]'
+            } disabled:text-[#b8c0c8]`}
+            disabled={boxes.length === 0}
+            onClick={toggleAllBoxes}
+            type="button"
+          >
+            <span className={`flex h-[17px] w-[17px] items-center justify-center rounded-[4px] border ${
+              isAllBoxesSelected || isSomeBoxesSelected
+                ? 'border-[#95a0aa] bg-white text-[#68727d]'
+                : 'border-[#c8d0d7] bg-white'
+            }`}>
+              {isAllBoxesSelected ? (
+                <Check className="h-[13px] w-[13px] stroke-[2.6]" />
+              ) : isSomeBoxesSelected ? (
+                <Minus className="h-[12px] w-[12px] stroke-[2.8]" />
+              ) : null}
+            </span>
+            全选
+          </button>
+          <span className="whitespace-nowrap text-[20px] leading-none text-[#68727d]">
+            已选中{selectedCount}题 / 已框选{boxes.length}题
           </span>
         </div>
       </div>
@@ -5868,7 +6759,7 @@ export function TabletAiEntryPreview() {
     return captureSelectedImages;
   };
 
-  const handleCapture = () => {
+  const handleCapture = (crop?: CropRegion) => {
     if (selectedMode === 'separate_answer') {
       const updater = isSupplementCapture
         ? captureRole === 'question' ? setSupplementQuestionImages : setSupplementAnswerImages
@@ -5876,7 +6767,7 @@ export function TabletAiEntryPreview() {
       const currentCount = captureRole === 'question' ? captureQuestionImages.length : captureAnswerImages.length;
       updater((currentImages) => [
         ...currentImages,
-        createMockCapture(captureRole, currentCount + 1),
+        createMockCapture(captureRole, currentCount + 1, crop),
       ]);
       return;
     }
@@ -5884,7 +6775,7 @@ export function TabletAiEntryPreview() {
     const updater = isSupplementCapture ? setSupplementSelectedImages : setSelectedImages;
     updater((currentImages) => [
       ...currentImages,
-      createMockCapture(undefined, currentImages.length + 1),
+      createMockCapture(undefined, currentImages.length + 1, crop),
     ]);
   };
 
@@ -5994,6 +6885,13 @@ export function TabletAiEntryPreview() {
     setIsCaptureOpen(true);
   };
 
+  const handleBackToRecognitionMode = () => {
+    setIsOcrPreviewOpen(false);
+    setIsCaptureOpen(false);
+    setCaptureCloseTarget(null);
+    setIsModeDialogOpen(true);
+  };
+
   const handleCloseCapture = () => {
     const closeTarget = captureCloseTarget;
     setIsCaptureOpen(false);
@@ -6092,7 +6990,7 @@ export function TabletAiEntryPreview() {
             <TabletOcrContentSelectionPage
               images={selectedImages}
               mode={selectedMode}
-              onBack={() => setIsOcrPreviewOpen(false)}
+              onBack={handleBackToRecognitionMode}
               onReplace={handleReplaceMaterials}
               onSupplement={handleSupplementMaterials}
               subject={selectedSubject || SINGLE_SUBJECT}
