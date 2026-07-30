@@ -1917,8 +1917,6 @@ function CaptureSimulator({
               height: `${(pendingCaptureBox.height / 100) * captureFrame.height}px`,
               left: `${captureFrame.left + (pendingCaptureBox.x / 100) * captureFrame.width}px`,
               top: `${captureFrame.top + (pendingCaptureBox.y / 100) * captureFrame.height}px`,
-              transform: 'rotate(-12deg)',
-              transformOrigin: 'left top',
               width: `${(pendingCaptureBox.width / 100) * captureFrame.width}px`,
             }}
           >
@@ -2892,6 +2890,7 @@ function TabletOcrQuestionReviewPage({
   const [focusedStemEditorId, setFocusedStemEditorId] = useState<string | null>(null);
   const [reviewDrawingBoxDraft, setReviewDrawingBoxDraft] = useState<DrawingBoxDraft | null>(null);
   const [showJoinMissingDialog, setShowJoinMissingDialog] = useState(false);
+  const [showJoinEditingDialog, setShowJoinEditingDialog] = useState(false);
   const [showJoinModeDialog, setShowJoinModeDialog] = useState(false);
   const [joinPaperMode, setJoinPaperMode] = useState<JoinPaperMode>('by_type');
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
@@ -5474,16 +5473,25 @@ function TabletOcrQuestionReviewPage({
     !isQuestionResultLoading(question) && question.questionTypeStatus !== 'failed'
   ));
   const missingAnswerQuestionCount = questions.filter(hasMissingAnswerOrAnalysis).length;
+  const editingQuestionCount = editingQuestionId && questions.some((question) => question.id === editingQuestionId) ? 1 : 0;
   const handleJoinPaperClick = () => {
     if (!hasJoinableQuestions) return;
     if (missingAnswerQuestionCount > 0) {
       setShowJoinMissingDialog(true);
       return;
     }
+    if (editingQuestionCount > 0) {
+      setShowJoinEditingDialog(true);
+      return;
+    }
     setShowJoinModeDialog(true);
   };
   const handleConfirmMissingJoin = () => {
     setShowJoinMissingDialog(false);
+    if (editingQuestionCount > 0) {
+      setShowJoinEditingDialog(true);
+      return;
+    }
     onExit();
   };
   const handleConfirmJoinMode = () => {
@@ -5530,6 +5538,13 @@ function TabletOcrQuestionReviewPage({
           missingCount={missingAnswerQuestionCount}
           onCancel={() => setShowJoinMissingDialog(false)}
           onConfirm={handleConfirmMissingJoin}
+        />
+      ) : null}
+
+      {showJoinEditingDialog ? (
+        <JoinEditingUnsavedDialog
+          editingCount={editingQuestionCount}
+          onClose={() => setShowJoinEditingDialog(false)}
         />
       ) : null}
 
@@ -5742,6 +5757,46 @@ function JoinMissingAnswerDialog({
               type="button"
             >
               确认
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function JoinEditingUnsavedDialog({
+  editingCount,
+  onClose,
+}: {
+  editingCount: number;
+  onClose: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 bg-black/45">
+      <section className="absolute left-1/2 top-1/2 w-[620px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[12px] bg-white shadow-[0_24px_70px_rgba(0,0,0,0.28)]">
+        <header className="relative flex h-[78px] items-center bg-[#e9fbf7] px-[30px]">
+          <h3 className="text-[28px] font-medium leading-none text-[#23bfb2]">加入试卷</h3>
+          <button
+            aria-label="关闭加入试卷提示"
+            className="absolute right-[24px] top-[21px] flex h-[36px] w-[36px] items-center justify-center rounded-full bg-[#23bfb2] text-white active:bg-[#12a99d]"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="h-[22px] w-[22px] stroke-[3]" />
+          </button>
+        </header>
+        <div className="px-[48px] pb-[38px] pt-[42px] text-center">
+          <p className="text-[24px] leading-[38px] text-[#3f4852]">
+            当前还有{editingCount}道题处于编辑状态，请先保存后再加入试卷。
+          </p>
+          <div className="mt-[38px] flex justify-center">
+            <button
+              className="h-[50px] min-w-[136px] rounded-[7px] bg-[#23bfb2] px-[28px] text-[22px] font-medium leading-none text-white active:bg-[#12a99d]"
+              onClick={onClose}
+              type="button"
+            >
+              我知道了
             </button>
           </div>
         </div>
